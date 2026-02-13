@@ -9,13 +9,6 @@
 #include "NES/NesMemoryManager.h"
 #include "NES/DefaultNesPpu.h"
 #include "NES/NsfPpu.h"
-#include "NES/HdPacks/HdAudioDevice.h"
-#include "NES/HdPacks/HdData.h"
-#include "NES/HdPacks/HdNesPpu.h"
-#include "NES/HdPacks/HdPackLoader.h"
-#include "NES/HdPacks/HdPackBuilder.h"
-#include "NES/HdPacks/HdBuilderPpu.h"
-#include "NES/HdPacks/HdVideoFilter.h"
 #include "NES/NesDefaultVideoFilter.h"
 #include "NES/NesNtscFilter.h"
 #include "NES/BisqwitNtscFilter.h"
@@ -43,10 +36,6 @@ NesConsole::NesConsole(Emulator* emu)
 
 NesConsole::~NesConsole()
 {
-	shared_ptr<HdPackData> hdData = _hdData.lock();
-	if(hdData) {
-		hdData->CancelLoad();
-	}
 }
 
 Emulator* NesConsole::GetEmulator()
@@ -103,11 +92,6 @@ void NesConsole::Serialize(Serializer& s)
 		SV(_mixer);
 	}
 
-	if(_hdAudioDevice) {
-		//For HD packs), save the state of the bgm playback
-		SV(_hdAudioDevice);
-	}
-
 	if(_vsSubConsole) {
 		//For VS Dualsystem, the sub console's savestate is appended to the end of the file
 		SV(_vsSubConsole);
@@ -139,8 +123,6 @@ LoadRomResult NesConsole::LoadRom(VirtualFile& romFile)
 {
 	RomData romData;
 
-	LoadHdPack(romFile);
-
 	LoadRomResult result = LoadRomResult::UnknownType;
 	unique_ptr<BaseMapper> mapper = MapperFactory::InitializeFromFile(this, romFile, romData, result);
 	if(mapper) {
@@ -171,9 +153,7 @@ LoadRomResult NesConsole::LoadRom(VirtualFile& romFile)
 			_controlManager.reset(new NesControlManager(this));
 		}
 
-		if(_hdData) {
-			_ppu.reset(new HdNesPpu(this, _hdData.get()));
-		} else if(dynamic_cast<NsfMapper*>(_mapper.get())) {
+		if(dynamic_cast<NsfMapper*>(_mapper.get())) {
 			//Disable most of the PPU for NSFs
 			_ppu.reset(new NsfPpu(this));
 		} else {
@@ -190,13 +170,6 @@ LoadRomResult NesConsole::LoadRom(VirtualFile& romFile)
 		_memoryManager->RegisterIODevice(_controlManager.get());
 		_memoryManager->RegisterIODevice(_mapper.get());
 
-		if(_hdData) {
-			_hdAudioDevice.reset(new HdAudioDevice(_emu, _hdData.get()));
-			_memoryManager->RegisterIODevice(_hdAudioDevice.get());
-		} else {
-			_hdAudioDevice.reset();
-		}
-
 		UpdateRegion();
 
 		_mixer->Reset();
@@ -209,31 +182,6 @@ LoadRomResult NesConsole::LoadRom(VirtualFile& romFile)
 		_mapper->OnAfterResetPowerOn();
 	}
     return result;
-}
-
-void NesConsole::LoadHdPack(VirtualFile& romFile)
-{
-	_hdData.reset();
-	if(GetNesConfig().EnableHdPacks) {
-		_hdData.reset(new HdPackData());
-		if(!HdPackLoader::LoadHdNesPack(romFile, *_hdData.get())) {
-			_hdData.reset();
-		} else {
-			auto result = _hdData->PatchesByHash.find(romFile.GetSha1Hash());
-			if(result != _hdData->PatchesByHash.end()) {
-				VirtualFile patchFile = result->second;
-				romFile.ApplyPatch(patchFile);
-			}
-
-			shared_ptr<HdPackData> data = _hdData.lock();
-			if(data) {
-				thread asyncLoadData([data]() {
-					data->LoadAsync();
-				});
-				asyncLoadData.detach();
-			}
-		}
-	}
 }
 
 void NesConsole::UpdateRegion(bool forceUpdate)
@@ -437,8 +385,6 @@ BaseVideoFilter* NesConsole::GetVideoFilter(bool getDefaultFilter)
 {
 	if(getDefaultFilter || GetRomFormat() == RomFormat::Nsf) {
 		return new NesDefaultVideoFilter(_emu);
-	} else if(_hdData && !_hdPackBuilder) {
-		return new HdVideoFilter(this, _emu, _hdData.get());
 	} else {
 		VideoFilterType filterType = _emu->GetSettings()->GetVideoConfig().VideoFilter;
 
@@ -657,59 +603,4 @@ DipSwitchInfo NesConsole::GetDipSwitchInfo()
 
 void NesConsole::ProcessNotification(ConsoleNotificationType type, void* parameter)
 {
-	if(type == ConsoleNotificationType::ExecuteShortcut) {
-		ExecuteShortcutParams* params = (ExecuteShortcutParams*)parameter;
-		switch(params->Shortcut) {
-			default: break;
-			case EmulatorShortcut::StartRecordHdPack: StartRecordingHdPack(*(HdPackBuilderOptions*)params->ParamPtr); break;
-			case EmulatorShortcut::StopRecordHdPack: StopRecordingHdPack(); break;
-		}
-	}
-}
-
-void NesConsole::StartRecordingHdPack(HdPackBuilderOptions options)
-{
-	auto lock = _emu->AcquireLock();
-
-	_emu->GetVideoDecoder()->WaitForAsyncFrameDecode();
-
-	std::stringstream saveState;
-	_emu->Serialize(saveState, false, 0);
-
-	_hdPackBuilder.reset();
-	_hdPackBuilder.reset(new HdPackBuilder(_emu, _ppu->GetPpuModel(), !_mapper->HasChrRom(), options));
-
-	_memoryManager->UnregisterIODevice(_ppu.get());
-	_ppu.reset(new HdBuilderPpu(this, _hdPackBuilder.get(), options.ChrRamBankSize));
-	_memoryManager->RegisterIODevice(_ppu.get());
-
-	_emu->Deserialize(saveState, SaveStateManager::FileFormatVersion, false);
-	_emu->GetSoundMixer()->StopAudio();
-
-	_emu->GetVideoDecoder()->ForceFilterUpdate();
-}
-
-void NesConsole::StopRecordingHdPack()
-{
-	if(_hdPackBuilder) {
-		auto lock = _emu->AcquireLock();
-		
-		_emu->GetVideoDecoder()->WaitForAsyncFrameDecode();
-
-		std::stringstream saveState;
-		_emu->Serialize(saveState, false, 0);
-
-		_memoryManager->UnregisterIODevice(_ppu.get());
-		if(_hdData) {
-			_ppu.reset(new HdNesPpu(this, _hdData.get()));
-		} else {
-			_ppu.reset(new DefaultNesPpu(this));
-		}
-		_memoryManager->RegisterIODevice(_ppu.get());
-		_hdPackBuilder.reset();
-
-		_emu->Deserialize(saveState, SaveStateManager::FileFormatVersion, false);
-		_emu->GetSoundMixer()->StopAudio();
-		_emu->GetVideoDecoder()->ForceFilterUpdate();
-	}
 }

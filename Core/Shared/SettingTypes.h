@@ -16,8 +16,6 @@ enum class EmulationFlags
 
 enum class ScaleFilterType
 {
-	xBRZ = 0,
-	HQX = 1,
 	Scale2x = 2,
 	_2xSai = 3,
 	Super2xSai = 4,
@@ -32,14 +30,6 @@ enum class VideoFilterType
 	NtscBlargg,
 	NtscBisqwit,
 	LcdGrid,
-	xBRZ2x,
-	xBRZ3x,
-	xBRZ4x,
-	xBRZ5x,
-	xBRZ6x,
-	HQ2x,
-	HQ3x,
-	HQ4x,
 	Scale2x,
 	Scale3x,
 	Scale4x,
@@ -852,9 +842,6 @@ struct DebugConfig
 	
 	bool WsBreakOnInvalidOpCode = false;
 
-	bool ScriptAllowIoOsAccess = false;
-	bool ScriptAllowNetworkAccess = false;
-	uint32_t ScriptTimeout = 1;
 };
 
 enum class HudDisplaySize
@@ -872,8 +859,6 @@ struct PreferencesConfig
 	bool ShowDebugInfo = false;
 	bool DisableOsd = false;
 	bool AllowBackgroundInput = false;
-	bool PauseOnMovieEnd = false;
-	bool ShowMovieIcons = false;
 	bool ShowTurboRewindIcons = false;
 	bool DisableGameSelectionScreen = false;
 
@@ -928,8 +913,6 @@ enum class EmulatorShortcut
 	RunSingleFrame,
 
 	TakeScreenshot,
-
-	ToggleRecordMovie,
 
 	IncreaseSpeed,
 	DecreaseSpeed,

@@ -13,13 +13,7 @@
     <Filter Include="NTSC">
       <UniqueIdentifier>{8b0e23bf-1bd9-4cc1-8046-784fd01e8688}</UniqueIdentifier>
     </Filter>
-    <Filter Include="xBRZ">
-      <UniqueIdentifier>{34df7dd9-5f1b-4aec-9212-1b70f1fada59}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="HQX">
-      <UniqueIdentifier>{c29925fd-7698-4db8-a328-73ef7f8993a9}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="KreedSaiEagle">
+<Filter Include="KreedSaiEagle">
       <UniqueIdentifier>{8e159744-fb91-4e16-aa82-8d8703ba2762}</UniqueIdentifier>
     </Filter>
     <Filter Include="Scale2x">
@@ -30,19 +24,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="xBRZ\config.h">
-      <Filter>xBRZ</Filter>
-    </ClInclude>
-    <ClInclude Include="xBRZ\xbrz.h">
-      <Filter>xBRZ</Filter>
-    </ClInclude>
-    <ClInclude Include="HQX\hqx.h">
-      <Filter>HQX</Filter>
-    </ClInclude>
-    <ClInclude Include="HQX\common.h">
-      <Filter>HQX</Filter>
-    </ClInclude>
-    <ClInclude Include="Scale2x\scale2x.h">
+<ClInclude Include="Scale2x\scale2x.h">
       <Filter>Scale2x</Filter>
     </ClInclude>
     <ClInclude Include="Scale2x\scale3x.h">
@@ -135,11 +117,9 @@
     <ClInclude Include="safe_ptr.h" />
     <ClInclude Include="Serializer.h" />
     <ClInclude Include="SimpleLock.h" />
-    <ClInclude Include="Socket.h" />
     <ClInclude Include="spng.h" />
     <ClInclude Include="StringUtilities.h" />
     <ClInclude Include="Timer.h" />
-    <ClInclude Include="UPnPPortMapper.h" />
     <ClInclude Include="UTF8Util.h" />
     <ClInclude Include="VirtualFile.h" />
     <ClInclude Include="CRC32.h" />
@@ -185,22 +165,7 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="xBRZ\xbrz.cpp">
-      <Filter>xBRZ</Filter>
-    </ClCompile>
-    <ClCompile Include="HQX\hq2x.cpp">
-      <Filter>HQX</Filter>
-    </ClCompile>
-    <ClCompile Include="HQX\hq3x.cpp">
-      <Filter>HQX</Filter>
-    </ClCompile>
-    <ClCompile Include="HQX\hq4x.cpp">
-      <Filter>HQX</Filter>
-    </ClCompile>
-    <ClCompile Include="HQX\init.cpp">
-      <Filter>HQX</Filter>
-    </ClCompile>
-    <ClCompile Include="Scale2x\scale2x.cpp">
+<ClCompile Include="Scale2x\scale2x.cpp">
       <Filter>Scale2x</Filter>
     </ClCompile>
     <ClCompile Include="Scale2x\scale3x.cpp">
@@ -276,10 +241,8 @@
     <ClCompile Include="PlatformUtilities.cpp" />
     <ClCompile Include="Serializer.cpp" />
     <ClCompile Include="SimpleLock.cpp" />
-    <ClCompile Include="Socket.cpp" />
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="Timer.cpp" />
-    <ClCompile Include="UPnPPortMapper.cpp" />
     <ClCompile Include="UTF8Util.cpp" />
     <ClCompile Include="VirtualFile.cpp" />
     <ClCompile Include="CRC32.cpp" />

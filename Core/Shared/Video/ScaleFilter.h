@@ -8,8 +8,6 @@ class Emulator;
 class ScaleFilter
 {
 private:
-	static bool _hqxInitDone;
-	
 	Emulator* _emu = nullptr;
 
 	uint32_t _filterScale;

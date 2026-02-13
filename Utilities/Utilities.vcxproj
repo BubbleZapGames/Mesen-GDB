@@ -212,9 +212,7 @@
     <ClInclude Include="kissfft.h" />
     <ClInclude Include="FolderUtilities.h" />
     <ClInclude Include="HexUtilities.h" />
-    <ClInclude Include="HQX\common.h" />
-    <ClInclude Include="HQX\hqx.h" />
-    <ClInclude Include="ISerializable.h" />
+<ClInclude Include="ISerializable.h" />
     <ClInclude Include="KreedSaiEagle\SaiEagle.h" />
     <ClInclude Include="magic_enum.hpp" />
     <ClInclude Include="md5.h" />
@@ -245,15 +243,11 @@
     <ClInclude Include="StaticFor.h" />
     <ClInclude Include="StringUtilities.h" />
 
-    <ClInclude Include="UPnPPortMapper.h" />
     <ClInclude Include="SimpleLock.h" />
-    <ClInclude Include="Socket.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Timer.h" />
     <ClInclude Include="UTF8Util.h" />
     <ClInclude Include="VirtualFile.h" />
-    <ClInclude Include="xBRZ\config.h" />
-    <ClInclude Include="xBRZ\xbrz.h" />
 
   </ItemGroup>
   <ItemGroup>
@@ -295,30 +289,6 @@
     <ClCompile Include="CRC32.cpp" />
     <ClCompile Include="FolderUtilities.cpp" />
     <ClCompile Include="HexUtilities.cpp" />
-    <ClCompile Include="HQX\hq2x.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="HQX\hq3x.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="HQX\hq4x.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="HQX\init.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
     <ClCompile Include="KreedSaiEagle\2xSai.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">NotUsing</PrecompiledHeader>
@@ -374,7 +344,6 @@
     <ClCompile Include="Serializer.cpp" />
     <ClCompile Include="sha1.cpp" />
     <ClCompile Include="SimpleLock.cpp" />
-    <ClCompile Include="Socket.cpp" />
     <ClCompile Include="spng.c">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
       <CompileAs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Default</CompileAs>
@@ -390,15 +359,8 @@
     </ClCompile>
 
     <ClCompile Include="Timer.cpp" />
-    <ClCompile Include="UPnPPortMapper.cpp" />
     <ClCompile Include="UTF8Util.cpp" />
     <ClCompile Include="VirtualFile.cpp" />
-    <ClCompile Include="xBRZ\xbrz.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">NotUsing</PrecompiledHeader>
-    </ClCompile>
 
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

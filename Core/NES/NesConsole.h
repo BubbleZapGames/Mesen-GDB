@@ -4,7 +4,6 @@
 #include "Shared/SettingTypes.h"
 #include "Shared/Interfaces/IConsole.h"
 #include "Debugger/DebugTypes.h"
-#include "Utilities/safe_ptr.h"
 
 class Emulator;
 class NesCpu;
@@ -17,11 +16,7 @@ class EmuSettings;
 class NesSoundMixer;
 class BaseVideoFilter;
 class BaseControlManager;
-class HdAudioDevice;
-class HdPackBuilder;
 class Epsm;
-struct HdPackData;
-struct HdPackBuilderOptions;
 
 enum class DebugEventType;
 enum class EventType;
@@ -45,21 +40,13 @@ private:
 	unique_ptr<NesControlManager> _controlManager;
 	unique_ptr<NesSoundMixer> _mixer;
 
-	safe_ptr<HdPackData> _hdData;
-	unique_ptr<HdAudioDevice> _hdAudioDevice;
-	unique_ptr<HdPackBuilder> _hdPackBuilder;
-
 	ConsoleRegion _region = ConsoleRegion::Auto;
 
 	bool _nextFrameOverclockDisabled = false;
 	
 	void UpdateRegion(bool forceUpdate = false);
-	void LoadHdPack(VirtualFile& romFile);
-	
-	void InitializeInputDevices(GameInputType inputType, GameSystem system);
 
-	void StartRecordingHdPack(HdPackBuilderOptions options);
-	void StopRecordingHdPack();
+	void InitializeInputDevices(GameInputType inputType, GameSystem system);
 
 public:
 	NesConsole(Emulator* emulator);
