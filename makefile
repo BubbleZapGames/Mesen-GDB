@@ -27,15 +27,12 @@ UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Linux)
 	MESENOS := linux
-	SHAREDLIB := MesenCore.so
 endif
 
 ifeq ($(UNAME_S),Darwin)
 	MESENOS := osx
-	SHAREDLIB := MesenCore.dylib
 	LTO := false
 	STATICLINK := false
-	LINKCHECKUNRESOLVED :=
 endif
 
 MESENFLAGS += -m64
@@ -108,7 +105,7 @@ ifeq ($(MESENOS),osx)
 	LINKOPTIONS += -framework Foundation -framework Cocoa -framework GameController -framework CoreHaptics -Wl,-rpath,/opt/local/lib
 endif
 
-CXXFLAGS = -fPIC -Wall --std=c++17 $(MESENFLAGS) $(SDL2INC) -I $(realpath ./) -I $(realpath ./Core) -I $(realpath ./Utilities) -I $(realpath ./Sdl) -I $(realpath ./Linux) -I $(realpath ./MacOS)
+CXXFLAGS = -fPIC -Wall --std=c++17 $(MESENFLAGS) $(SDL2INC) -I $(realpath ./) -I $(realpath ./Core) -I $(realpath ./Utilities) -I $(realpath ./Sdl) -I $(realpath ./Linux) -I $(realpath ./MacOS) -I $(realpath ./GDB)
 OBJCXXFLAGS = $(CXXFLAGS)
 CFLAGS = -fPIC -Wall $(MESENFLAGS)
 
@@ -163,6 +160,14 @@ endif
 
 FSLIB := -lstdc++fs
 
+GDBSRC := $(filter-out GDB/DapMain.cpp, $(shell find GDB -name '*.cpp'))
+GDBOBJ := $(GDBSRC:.cpp=.o)
+
+GDBMAINSRC := GDB/DapMain.cpp
+GDBMAINOBJ := $(GDBMAINSRC:.cpp=.o)
+
+GDBBIN := mesen-gdb
+
 ifeq ($(MESENOS),osx)
 	LIBEVDEVOBJ :=
 	LIBEVDEVINC :=
@@ -170,22 +175,20 @@ ifeq ($(MESENOS),osx)
 	FSLIB :=
 endif
 
-all: core
-
-core: $(OUTFOLDER)/$(SHAREDLIB)
+all: $(OUTFOLDER)/$(GDBBIN)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-	
+
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 %.o: %.mm
 	$(CXX) $(OBJCXXFLAGS) -c $< -o $@
 
-$(OUTFOLDER)/$(SHAREDLIB): $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(MACOSOBJ)
+$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(MACOSOBJ)
 	mkdir -p $(OUTFOLDER)
-	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) $(LINKCHECKUNRESOLVED) -shared -o $@ $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) $(SDL2INC) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
+	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
 
 clean:
 	rm -r -f $(COREOBJ)
@@ -193,4 +196,5 @@ clean:
 	rm -r -f $(LINUXOBJ) $(LIBEVDEVOBJ)
 	rm -r -f $(SDLOBJ)
 	rm -r -f $(MACOSOBJ)
-	rm -r -f $(OUTFOLDER)/$(SHAREDLIB)
+	rm -r -f $(GDBOBJ) $(GDBMAINOBJ)
+	rm -r -f $(OUTFOLDER)/$(GDBBIN)
