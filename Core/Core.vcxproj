@@ -746,7 +746,6 @@
     <ClInclude Include="Shared\SystemActionManager.h" />
     <ClInclude Include="Shared\Video\VideoDecoder.h" />
     <ClInclude Include="Shared\Video\VideoRenderer.h" />
-    <ClInclude Include="Shared\Audio\WaveRecorder.h" />
     <ClInclude Include="Shared\Interfaces\IMouseManager.h" />
     <ClInclude Include="WS\APU\WsApuCh1.h" />
     <ClInclude Include="WS\APU\WsApuCh2.h" />
@@ -1050,7 +1049,6 @@
     <ClCompile Include="SNES\Coprocessors\SGB\SuperGameboy.cpp" />
     <ClCompile Include="Shared\Video\VideoDecoder.cpp" />
     <ClCompile Include="Shared\Video\VideoRenderer.cpp" />
-    <ClCompile Include="Shared\Audio\WaveRecorder.cpp" />
     <ClCompile Include="WS\APU\WsApu.cpp" />
     <ClCompile Include="WS\Carts\WsCart.cpp" />
     <ClCompile Include="WS\Debugger\DummyWsCpu.cpp" />

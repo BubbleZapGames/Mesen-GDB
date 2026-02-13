@@ -929,8 +929,6 @@ enum class EmulatorShortcut
 
 	TakeScreenshot,
 
-	ToggleRecordVideo,
-	ToggleRecordAudio,
 	ToggleRecordMovie,
 
 	IncreaseSpeed,

@@ -492,7 +492,6 @@ bool SnesPpu::ProcessEndOfScanline(uint16_t& hClock)
 				!_settings->GetSnesConfig().DisableFrameSkipping &&
 				(!_interlacedFrame || (_frameCount & 0x02)) &&
 				!_emu->GetRewindManager()->IsRewinding() &&
-				!_emu->GetVideoRenderer()->IsRecording() &&
 				(_settings->GetEmulationSpeed() == 0 || _settings->GetEmulationSpeed() > 150) &&
 				_frameSkipTimer.GetElapsedMS() < 10
 			);

@@ -8,9 +8,6 @@
 #include "Shared/Video/SystemHud.h"
 #include "Shared/InputHud.h"
 #include "Shared/MessageManager.h"
-#include "Utilities/Video/IVideoRecorder.h"
-#include "Utilities/Video/AviRecorder.h"
-#include "Utilities/Video/GifRecorder.h"
 
 VideoRenderer::VideoRenderer(Emulator* emu)
 {
@@ -166,8 +163,6 @@ void VideoRenderer::UpdateFrame(RenderedFrame& frame)
 		_systemHud->UpdateHud();
 	}
 
-	ProcessAviRecording(frame);
-
 	{
 		auto lock = _frameLock.AcquireSafe();
 		_lastFrame = frame;
@@ -201,96 +196,3 @@ void VideoRenderer::UnregisterRenderingDevice(IRenderingDevice *renderer)
 	}
 }
 
-void VideoRenderer::ProcessAviRecording(RenderedFrame& frame)
-{
-	shared_ptr<IVideoRecorder> recorder = _recorder.lock();
-	if(recorder) {
-		if(!recorder->IsRecording()) {
-			recorder->StartRecording(frame.Width, frame.Height, 4, _emu->GetSettings()->GetAudioConfig().SampleRate, _emu->GetFps());
-		}
-
-		if(_recorderOptions.RecordInputHud || _recorderOptions.RecordSystemHud) {
-			//Calculate the scale needed for the HUD elements
-			FrameInfo originalSize = _emu->GetVideoDecoder()->GetBaseFrameInfo(true);
-			double scale = (double)frame.Height / originalSize.Height;
-			FrameInfo scaledFrameSize = { (uint32_t)(frame.Width / scale), (uint32_t)(frame.Height / scale) };
-
-			//Update the surface to match the frame's size
-			_aviRecorderSurface.UpdateSize(frame.Width, frame.Height);
-			
-			//Copy the game screen
-			memcpy(_aviRecorderSurface.Buffer, frame.FrameBuffer, frame.Width * frame.Height * sizeof(uint32_t));
-
-			//Draw the system/input HUDs
-			DebugHud hud;
-			InputHud inputHud(_emu, &hud);
-			if(_recorderOptions.RecordSystemHud) {
-				_systemHud->Draw(&hud, scaledFrameSize.Width, scaledFrameSize.Height);
-			}
-			if(_recorderOptions.RecordInputHud) {
-				inputHud.DrawControllers(scaledFrameSize, frame.InputData);
-			}
-
-			FrameInfo frameSize = { frame.Width, frame.Height };
-			hud.Draw((uint32_t*)_aviRecorderSurface.Buffer, frameSize, {}, frame.FrameNumber, { scale, scale });
-
-			//Record the final result
-			if(!recorder->AddFrame(_aviRecorderSurface.Buffer, frame.Width, frame.Height, _emu->GetFps())) {
-				StopRecording();
-			}
-		} else {
-			//Only record the game screen
-			if(!recorder->AddFrame(frame.FrameBuffer, frame.Width, frame.Height, _emu->GetFps())) {
-				StopRecording();
-			}
-		}
-	}
-}
-
-void VideoRenderer::StartRecording(string filename, RecordAviOptions options)
-{
-	_recorderOptions = options;
-
-	shared_ptr<IVideoRecorder> recorder;
-	if(options.Codec == VideoCodec::GIF) {
-		recorder.reset(new GifRecorder());
-	} else {
-		recorder.reset(new AviRecorder(options.Codec, options.CompressionLevel));
-	}
-
-	if(recorder->Init(filename)) {
-		_recorder.reset(recorder);
-		
-		if(!options.RecordSystemHud) {
-			//Only display message if not recording the system HUD (otherwise the message is always visible on the recording, which isn't ideal)
-			MessageManager::DisplayMessage("VideoRecorder", "VideoRecorderStarted", filename);
-		}
-	} else {
-		MessageManager::DisplayMessage("VideoRecorder", "CouldNotWriteToFile", filename);
-	}
-}
-
-void VideoRenderer::AddRecordingSound(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate)
-{
-	shared_ptr<IVideoRecorder> recorder = _recorder.lock();
-	if(recorder) {
-		if(!recorder->AddSound(soundBuffer, sampleCount, sampleRate)) {
-			StopRecording();
-		}
-	}
-}
-
-void VideoRenderer::StopRecording()
-{
-	shared_ptr<IVideoRecorder> recorder = _recorder.lock();
-	if(recorder) {
-		MessageManager::DisplayMessage("VideoRecorder", "VideoRecorderStopped", recorder->GetOutputFile());
-	}
-	_aviRecorderSurface.UpdateSize(0, 0);
-	_recorder.reset();
-}
-
-bool VideoRenderer::IsRecording()
-{
-	return _recorder != nullptr;
-}

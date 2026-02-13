@@ -5,8 +5,6 @@
 #include "Shared/EmuSettings.h"
 #include "Shared/Audio/SoundResampler.h"
 #include "Shared/RewindManager.h"
-#include "Shared/Video/VideoRenderer.h"
-#include "Shared/Audio/WaveRecorder.h"
 #include "Shared/Interfaces/IAudioProvider.h"
 #include "Utilities/Audio/Equalizer.h"
 #include "Utilities/Audio/ReverbFilter.h"
@@ -74,19 +72,15 @@ void SoundMixer::PlayAudioBuffer(int16_t* samples, uint32_t sampleCount, uint32_
 	EmuSettings* settings = _emu->GetSettings();
 	AudioPlayerHud* audioPlayer = _emu->GetAudioPlayerHud();
 	AudioConfig cfg = settings->GetAudioConfig();
-	bool isRecording = _waveRecorder || _emu->GetVideoRenderer()->IsRecording();
-
 	uint32_t masterVolume = audioPlayer ? audioPlayer->GetVolume() : cfg.MasterVolume;
-	if(!isRecording) {
-		if(!audioPlayer && settings->CheckFlag(EmulationFlags::InBackground)) {
-			if(cfg.MuteSoundInBackground) {
-				masterVolume = 0;
-			} else if(cfg.ReduceSoundInBackground) {
-				masterVolume = cfg.VolumeReduction == 100 ? 0 : masterVolume * (100 - cfg.VolumeReduction) / 100;
-			}
-		} else if(cfg.ReduceSoundInFastForward && settings->CheckFlag(EmulationFlags::TurboOrRewind)) {
+	if(!audioPlayer && settings->CheckFlag(EmulationFlags::InBackground)) {
+		if(cfg.MuteSoundInBackground) {
+			masterVolume = 0;
+		} else if(cfg.ReduceSoundInBackground) {
 			masterVolume = cfg.VolumeReduction == 100 ? 0 : masterVolume * (100 - cfg.VolumeReduction) / 100;
 		}
+	} else if(cfg.ReduceSoundInFastForward && settings->CheckFlag(EmulationFlags::TurboOrRewind)) {
+		masterVolume = cfg.VolumeReduction == 100 ? 0 : masterVolume * (100 - cfg.VolumeReduction) / 100;
 	}
 
 	_leftSample = samples[0];
@@ -129,16 +123,6 @@ void SoundMixer::PlayAudioBuffer(int16_t* samples, uint32_t sampleCount, uint32_
 
 	RewindManager* rewindManager = _emu->GetRewindManager();
 	if(!_emu->IsRunAheadFrame() && rewindManager && rewindManager->SendAudio(out, count)) {
-		if(isRecording) {
-			shared_ptr<WaveRecorder> recorder = _waveRecorder.lock();
-			if(recorder) {
-				if(!recorder->WriteSamples(out, count, cfg.SampleRate, true)) {
-					StopRecording();
-				}
-			}
-			_emu->GetVideoRenderer()->AddRecordingSound(out, count, cfg.SampleRate);
-		}
-
 		//Only send the audio to the device if the emulation is running
 		//(this is to prevent playing an audio blip when loading a save state)
 		if(!_emu->IsPaused() && _audioDevice) {
@@ -184,21 +168,6 @@ void SoundMixer::ProcessEqualizer(int16_t* samples, uint32_t sampleCount, uint32
 double SoundMixer::GetRateAdjustment()
 {
 	return _resampler->GetRateAdjustment();
-}
-
-void SoundMixer::StartRecording(string filepath)
-{
-	_waveRecorder.reset(new WaveRecorder(filepath, _emu->GetSettings()->GetAudioConfig().SampleRate, true));
-}
-
-void SoundMixer::StopRecording()
-{
-	_waveRecorder.reset();
-}
-
-bool SoundMixer::IsRecording()
-{
-	return _waveRecorder != nullptr;
 }
 
 void SoundMixer::GetLastSamples(int16_t &left, int16_t &right)

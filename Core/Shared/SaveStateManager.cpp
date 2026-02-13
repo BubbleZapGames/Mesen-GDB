@@ -196,10 +196,7 @@ bool SaveStateManager::LoadState(istream &stream)
 		DeserializeResult result = _emu->Deserialize(stream, fileFormatVersion, false, stateConsoleType);
 
 		if(result == DeserializeResult::Success) {
-			if(_emu->IsPaused() && !_emu->GetVideoRenderer()->IsRecording()) {
-				//Only send the saved frame if the emulation is paused and no avi recording is in progress
-				//Otherwise the avi recorder will receive an extra frame that has no sound, which will
-				//create a video vs audio desync in the avi file.
+			if(_emu->IsPaused()) {
 				_emu->GetVideoDecoder()->UpdateFrame(frame, true, false);
 			}
 			return true;

@@ -161,7 +161,6 @@ void GbaPpu::ProcessEndOfScanline()
 		_skipRender = (
 			!cfg.DisableFrameSkipping &&
 			!_emu->GetRewindManager()->IsRewinding() &&
-			!_emu->GetVideoRenderer()->IsRecording() &&
 			(settings->GetEmulationSpeed() == 0 || settings->GetEmulationSpeed() > 150) &&
 			_frameSkipTimer.GetElapsedMS() < 15
 		);

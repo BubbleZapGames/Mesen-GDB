@@ -7,7 +7,6 @@
 class Emulator;
 class Equalizer;
 class SoundResampler;
-class WaveRecorder;
 class IAudioProvider;
 class CrossFeedFilter;
 class ReverbFilter;
@@ -20,7 +19,6 @@ private:
 	Emulator *_emu;
 	unique_ptr<Equalizer> _equalizer;
 	unique_ptr<SoundResampler> _resampler;
-	safe_ptr<WaveRecorder> _waveRecorder;
 	int16_t *_sampleBuffer = nullptr;
 
 	HermiteResampler _pitchAdjust;
@@ -49,8 +47,5 @@ public:
 	AudioStatistics GetStatistics();
 	double GetRateAdjustment();
 
-	void StartRecording(string filepath);
-	void StopRecording();
-	bool IsRecording();
 	void GetLastSamples(int16_t &left, int16_t &right);
 };

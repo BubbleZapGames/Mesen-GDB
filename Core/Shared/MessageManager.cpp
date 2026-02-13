@@ -19,7 +19,6 @@ std::unordered_map<string, string> MessageManager::_enResources = {
 	{ "ScreenshotSaved", u8"Screenshot Saved" },
 	{ "SoundRecorder", u8"Sound Recorder" },
 	{ "Test", u8"Test" },
-	{ "VideoRecorder", u8"Video Recorder" },
 
 	{ "ApplyingPatch", u8"Applying patch: %1" },
 	{ "PatchFailed", u8"Failed to apply patch: %1" },
@@ -75,8 +74,6 @@ std::unordered_map<string, string> MessageManager::_enResources = {
 	{ "TestFileSavedTo", u8"Test file saved to: %1" },
 	{ "UnexpectedError", u8"Unexpected error: %1" },
 	{ "UnsupportedMapper", u8"Unsupported mapper (%1), cannot load game." },
-	{ "VideoRecorderStarted", u8"Recording to: %1" },
-	{ "VideoRecorderStopped", u8"Recording saved to: %1" },
 };
 
 std::list<string> MessageManager::_log;

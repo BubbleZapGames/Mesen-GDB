@@ -161,7 +161,6 @@ void PceVpc::ProcessStartFrame()
 		_skipRender = (
 			!_emu->GetSettings()->GetPcEngineConfig().DisableFrameSkipping &&
 			!_emu->GetRewindManager()->IsRewinding() &&
-			!_emu->GetVideoRenderer()->IsRecording() &&
 			(_emu->GetSettings()->GetEmulationSpeed() == 0 || _emu->GetSettings()->GetEmulationSpeed() > 150) &&
 			_frameSkipTimer.GetElapsedMS() < 10
 		);

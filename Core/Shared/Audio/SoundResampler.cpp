@@ -3,7 +3,6 @@
 #include "Shared/EmuSettings.h"
 #include "Shared/Audio/SoundMixer.h"
 #include "Shared/Audio/SoundResampler.h"
-#include "Shared/Video/VideoRenderer.h"
 #include "Utilities/Audio/HermiteResampler.h"
 
 SoundResampler::SoundResampler(Emulator* emu)
@@ -29,9 +28,7 @@ uint32_t SoundResampler::GetTargetRate()
 double SoundResampler::GetTargetRateAdjustment()
 {
 	AudioConfig cfg = _emu->GetSettings()->GetAudioConfig();
-	bool isRecording = _emu->GetSoundMixer()->IsRecording() || _emu->GetVideoRenderer()->IsRecording();
-	if(!isRecording && !cfg.DisableDynamicSampleRate) {
-		//Don't deviate from selected sample rate while recording
+	if(!cfg.DisableDynamicSampleRate) {
 		//TODO: Have 2 output streams (one for recording, one for the speakers)
 		AudioStatistics stats = _emu->GetSoundMixer()->GetStatistics();
 
