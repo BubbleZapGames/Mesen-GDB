@@ -10,7 +10,7 @@
 #include "Shared/BaseControlDevice.h"
 #include "Shared/Audio/SoundMixer.h"
 #include "Shared/NotificationManager.h"
-#include "Shared/Movies/MovieRecorder.h"
+#include "Shared/BatteryManager.h"
 #include "Shared/SaveStateManager.h"
 
 HistoryViewer::HistoryViewer(Emulator* emu)
@@ -129,26 +129,6 @@ bool HistoryViewer::CreateSaveState(string outputFile, uint32_t position)
 		return true;
 	}
 	return false;
-}
-
-bool HistoryViewer::SaveMovie(string movieFile, uint32_t startPosition, uint32_t endPosition)
-{
-	startPosition /= RewindManager::BufferSize;
-	endPosition /= RewindManager::BufferSize;
-
-	//Take a savestate to be able to restore it after generating the movie file
-	//(the movie generation uses the console's inputs, which could affect the emulation otherwise)
-	stringstream state;
-	auto lock = _emu->AcquireLock();
-	_emu->Serialize(state, true, false);
-
-	//Convert the rewind data to a .mmo file
-	unique_ptr<MovieRecorder> recorder(new MovieRecorder(_emu));
-	bool result = recorder->CreateMovie(movieFile, _history, startPosition, endPosition, _mainEmu->GetBatteryManager()->HasBattery());
-
-	//Resume the state and resume
-	_emu->Deserialize(state, SaveStateManager::FileFormatVersion, true);
-	return result;
 }
 
 void HistoryViewer::ResumeGameplay(uint32_t resumePosition)

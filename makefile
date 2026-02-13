@@ -1,8 +1,6 @@
-#Welcome to what must be the most terrible makefile ever (but hey, it works)
 #Both clang & gcc work fine - clang seems to output faster code
-#.NET 6 (and its dev tools) must be installed to compile the UI.
-#The emulation core also requires SDL2.
-#Run "make" to build, "make run" to run
+#The emulation core requires SDL2.
+#Run "make" to build
 
 MESENFLAGS=
 
@@ -14,8 +12,8 @@ ifeq ($(USE_GCC),true)
 else
 	CXX := clang++
 	CC := clang
-	PROFILE_GEN_FLAG := -fprofile-instr-generate=$(CURDIR)/PGOHelper/pgo.profraw
-	PROFILE_USE_FLAG := -fprofile-instr-use=$(CURDIR)/PGOHelper/pgo.profdata
+	PROFILE_GEN_FLAG := -fprofile-instr-generate=$(CURDIR)/pgo.profraw
+	PROFILE_USE_FLAG := -fprofile-instr-use=$(CURDIR)/pgo.profdata
 endif
 
 SDL2LIB := $(shell sdl2-config --libs)
@@ -119,20 +117,10 @@ DEBUGFOLDER := bin/$(MESENPLATFORM)/Debug
 RELEASEFOLDER := bin/$(MESENPLATFORM)/Release
 ifeq ($(DEBUG), 0)
 	OUTFOLDER = $(RELEASEFOLDER)
-	BUILD_TYPE := Release
-	OPTIMIZEUI := -p:OptimizeUi=true
 else
 	OUTFOLDER = $(DEBUGFOLDER)
-	BUILD_TYPE := Debug
-	OPTIMIZEUI :=
 endif
 
-
-ifeq ($(USE_AOT),true)
-	PUBLISHFLAGS ?=  -r $(MESENPLATFORM) -p:PublishSingleFile=false -p:PublishAot=true -p:SelfContained=true
-else
-	PUBLISHFLAGS ?=  -r $(MESENPLATFORM) --no-self-contained true -p:PublishSingleFile=true
-endif
 
 
 CORESRC := $(shell find Core -name '*.cpp')
@@ -143,12 +131,6 @@ UTILOBJ := $(addsuffix .o,$(basename $(UTILSRC)))
 
 SDLSRC := $(shell find Sdl -name '*.cpp')
 SDLOBJ := $(SDLSRC:.cpp=.o)
-
-SEVENZIPSRC := $(shell find SevenZip -name '*.c')
-SEVENZIPOBJ := $(SEVENZIPSRC:.c=.o)
-
-LUASRC := $(shell find Lua -name '*.c')
-LUAOBJ := $(LUASRC:.c=.o)
 
 ifeq ($(MESENOS),linux)
 	LINUXSRC := $(shell find Linux -name '*.cpp')
@@ -163,9 +145,6 @@ else
 	MACOSSRC :=
 endif
 MACOSOBJ := $(MACOSSRC:.mm=.o)
-
-DLLSRC := $(shell find InteropDLL -name '*.cpp')
-DLLOBJ := $(DLLSRC:.cpp=.o)
 
 ifeq ($(SYSTEM_LIBEVDEV), true)
 	LIBEVDEVLIB := $(shell pkg-config --libs libevdev)
@@ -185,32 +164,15 @@ endif
 FSLIB := -lstdc++fs
 
 ifeq ($(MESENOS),osx)
-	LIBEVDEVOBJ := 
-	LIBEVDEVINC := 
-	LIBEVDEVSRC := 
-	FSLIB := 
-	ifeq ($(USE_AOT),true)
-		PUBLISHFLAGS := -t:BundleApp -p:UseAppHost=true -p:RuntimeIdentifier=$(MESENPLATFORM) -p:PublishSingleFile=false -p:PublishAot=true -p:SelfContained=true
-	else
-		PUBLISHFLAGS := -t:BundleApp -p:UseAppHost=true -p:RuntimeIdentifier=$(MESENPLATFORM) -p:SelfContained=true -p:PublishSingleFile=false -p:PublishReadyToRun=false
-	endif
+	LIBEVDEVOBJ :=
+	LIBEVDEVINC :=
+	LIBEVDEVSRC :=
+	FSLIB :=
 endif
 
-all: ui
+all: core
 
-ui: InteropDLL/$(OBJFOLDER)/$(SHAREDLIB)
-	mkdir -p $(OUTFOLDER)/Dependencies
-	rm -fr $(OUTFOLDER)/Dependencies/*
-	cp InteropDLL/$(OBJFOLDER)/$(SHAREDLIB) $(OUTFOLDER)/$(SHAREDLIB)
-	#Called twice because the first call copies native libraries to the bin folder which need to be included in Dependencies.zip
-	#Don't run with AOT flags the first time to reduce build duration
-	cd UI && dotnet publish -c $(BUILD_TYPE) $(OPTIMIZEUI) -r $(MESENPLATFORM)
-	cd UI && dotnet publish -c $(BUILD_TYPE) $(OPTIMIZEUI) $(PUBLISHFLAGS)
-
-core: InteropDLL/$(OBJFOLDER)/$(SHAREDLIB)
-
-pgohelper: InteropDLL/$(OBJFOLDER)/$(SHAREDLIB)
-	mkdir -p PGOHelper/$(OBJFOLDER) && cd PGOHelper/$(OBJFOLDER) && $(CXX) $(CXXFLAGS) $(LINKCHECKUNRESOLVED) -o pgohelper ../PGOHelper.cpp ../../bin/pgohelperlib.so -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
+core: $(OUTFOLDER)/$(SHAREDLIB)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -221,25 +183,14 @@ pgohelper: InteropDLL/$(OBJFOLDER)/$(SHAREDLIB)
 %.o: %.mm
 	$(CXX) $(OBJCXXFLAGS) -c $< -o $@
 
-InteropDLL/$(OBJFOLDER)/$(SHAREDLIB): $(SEVENZIPOBJ) $(LUAOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(DLLOBJ) $(MACOSOBJ)
-	mkdir -p bin
-	mkdir -p InteropDLL/$(OBJFOLDER)
-	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) $(LINKCHECKUNRESOLVED) -shared -o $(SHAREDLIB) $(DLLOBJ) $(SEVENZIPOBJ) $(LUAOBJ) $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) $(SDL2INC) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
-	cp $(SHAREDLIB) bin/pgohelperlib.so
-	mv $(SHAREDLIB) InteropDLL/$(OBJFOLDER)
-
-pgo:
-	./buildPGO.sh
-
-run:
-	$(OUTFOLDER)/$(MESENPLATFORM)/publish/Mesen
+$(OUTFOLDER)/$(SHAREDLIB): $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(MACOSOBJ)
+	mkdir -p $(OUTFOLDER)
+	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) $(LINKCHECKUNRESOLVED) -shared -o $@ $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) $(SDL2INC) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
 
 clean:
 	rm -r -f $(COREOBJ)
 	rm -r -f $(UTILOBJ)
 	rm -r -f $(LINUXOBJ) $(LIBEVDEVOBJ)
 	rm -r -f $(SDLOBJ)
-	rm -r -f $(SEVENZIPOBJ)
-	rm -r -f $(LUAOBJ)
 	rm -r -f $(MACOSOBJ)
-	rm -r -f $(DLLOBJ)
+	rm -r -f $(OUTFOLDER)/$(SHAREDLIB)

@@ -24,11 +24,6 @@ void BatteryManager::SetBatteryProvider(shared_ptr<IBatteryProvider> provider)
 	_provider = provider;
 }
 
-void BatteryManager::SetBatteryRecorder(shared_ptr<IBatteryRecorder> recorder)
-{
-	_recorder = recorder;
-}
-
 void BatteryManager::SaveBattery(string extension, uint8_t* data, uint32_t length)
 {
 	if(_romName.empty()) {
@@ -60,14 +55,6 @@ vector<uint8_t> BatteryManager::LoadBattery(string extension)
 		VirtualFile file = GetBasePath(extension);
 		if(file.IsValid()) {
 			file.ReadFile(batteryData);
-		}
-	}
-
-	if(!batteryData.empty()) {
-		shared_ptr<IBatteryRecorder> recorder = _recorder.lock();
-		if(recorder) {
-			//Used by movies to record initial state of battery-backed ram at power on
-			recorder->OnLoadBattery(extension, batteryData);
 		}
 	}
 

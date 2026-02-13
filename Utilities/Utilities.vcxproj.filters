@@ -147,11 +147,9 @@
     <ClInclude Include="Video\BaseCodec.h">
       <Filter>Video</Filter>
     </ClInclude>
-    <ClInclude Include="ArchiveReader.h" />
+
     <ClInclude Include="miniz.h" />
-    <ClInclude Include="SZReader.h" />
-    <ClInclude Include="ZipReader.h" />
-    <ClInclude Include="ZipWriter.h" />
+
     <ClInclude Include="AutoResetEvent.h" />
     <ClInclude Include="Base64.h" />
     <ClInclude Include="FastString.h" />
@@ -311,11 +309,9 @@
     <ClCompile Include="NTSC\snes_ntsc.cpp">
       <Filter>NTSC</Filter>
     </ClCompile>
-    <ClCompile Include="ArchiveReader.cpp" />
+
     <ClCompile Include="miniz.cpp" />
-    <ClCompile Include="SZReader.cpp" />
-    <ClCompile Include="ZipReader.cpp" />
-    <ClCompile Include="ZipWriter.cpp" />
+
     <ClCompile Include="AutoResetEvent.cpp" />
     <ClCompile Include="FolderUtilities.cpp" />
     <ClCompile Include="HexUtilities.cpp" />

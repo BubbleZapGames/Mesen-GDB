@@ -10,7 +10,6 @@ class CallstackManager;
 class MemoryAccessCounter;
 class CodeDataLogger;
 class EmuSettings;
-class ScriptManager;
 class BreakpointManager;
 class IAssembler;
 class BaseEventManager;

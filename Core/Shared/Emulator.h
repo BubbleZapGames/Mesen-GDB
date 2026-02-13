@@ -22,7 +22,6 @@ class SaveStateManager;
 class RewindManager;
 class BatteryManager;
 class CheatManager;
-class MovieManager;
 class HistoryViewer;
 class FrameLimiter;
 class DebugStats;
@@ -32,9 +31,6 @@ class BaseVideoFilter;
 class ShortcutKeyHandler;
 class SystemActionManager;
 class AudioPlayerHud;
-class GameServer;
-class GameClient;
-
 class IInputRecorder;
 class IInputProvider;
 
@@ -79,11 +75,8 @@ private:
 	const unique_ptr<VideoDecoder> _videoDecoder;
 	const unique_ptr<SaveStateManager> _saveStateManager;
 	const unique_ptr<CheatManager> _cheatManager;
-	const unique_ptr<MovieManager> _movieManager;
 	const unique_ptr<HistoryViewer> _historyViewer;
 	
-	const shared_ptr<GameServer> _gameServer;
-	const shared_ptr<GameClient> _gameClient;
 	const shared_ptr<RewindManager> _rewindManager;
 
 	thread_local static thread::id _currentThreadId;
@@ -199,10 +192,7 @@ public:
 	DebugHud* GetScriptHud() { return _scriptHud.get(); }
 	BatteryManager* GetBatteryManager() { return _batteryManager.get(); }
 	CheatManager* GetCheatManager() { return _cheatManager.get(); }
-	MovieManager* GetMovieManager() { return _movieManager.get(); }
 	HistoryViewer* GetHistoryViewer() { return _historyViewer.get(); }
-	GameServer* GetGameServer() { return _gameServer.get(); }
-	GameClient* GetGameClient() { return _gameClient.get(); }
 	shared_ptr<SystemActionManager> GetSystemActionManager() { return _systemActionManager; }
 
 	BaseVideoFilter* GetVideoFilter(bool getDefaultFilter = false);

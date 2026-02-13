@@ -1,17 +1,14 @@
 #include "pch.h"
 #include "Utilities/FolderUtilities.h"
-#include "Utilities/ZipWriter.h"
-#include "Utilities/ZipReader.h"
+#include "Utilities/miniz.h"
 #include "Utilities/PNGHelper.h"
 #include "Shared/SaveStateManager.h"
 #include "Shared/MessageManager.h"
 #include "Shared/Emulator.h"
 #include "Shared/EmuSettings.h"
-#include "Shared/Movies/MovieManager.h"
 #include "Shared/RenderedFrame.h"
 #include "Shared/EventType.h"
 #include "Debugger/Debugger.h"
-#include "Netplay/GameClient.h"
 #include "Shared/Video/VideoDecoder.h"
 #include "Shared/Video/VideoRenderer.h"
 #include "Shared/Video/BaseVideoFilter.h"
@@ -157,9 +154,6 @@ bool SaveStateManager::LoadState(istream &stream)
 	if(!_emu->IsRunning()) {
 		//Can't load a state if no game is running
 		return false;
-	} else if(_emu->GetGameClient()->Connected()) {
-		MessageManager::DisplayMessage("Netplay", "NetplayNotAllowed");
-		return false;
 	}
 
 	char header[3];
@@ -202,10 +196,6 @@ bool SaveStateManager::LoadState(istream &stream)
 		DeserializeResult result = _emu->Deserialize(stream, fileFormatVersion, false, stateConsoleType);
 
 		if(result == DeserializeResult::Success) {
-			//Stop any movie that might have been playing/recording if a state is loaded
-			//(Note: Loading a state is disabled in the UI while a movie is playing/recording)
-			_emu->GetMovieManager()->Stop();
-
 			if(_emu->IsPaused() && !_emu->GetVideoRenderer()->IsRecording()) {
 				//Only send the saved frame if the emulation is paused and no avi recording is in progress
 				//Otherwise the avi recorder will receive an extra frame that has no sound, which will
@@ -261,68 +251,10 @@ bool SaveStateManager::LoadState(int stateIndex)
 
 void SaveStateManager::SaveRecentGame(string romName, string romPath, string patchPath)
 {
-	if(_emu->GetSettings()->CheckFlag(EmulationFlags::ConsoleMode) || _emu->GetSettings()->CheckFlag(EmulationFlags::TestMode)) {
-		//Skip saving the recent game file when running in testrunner/CLI console mode
-		return;
-	}
-
-	string filename = FolderUtilities::GetFilename(_emu->GetRomInfo().RomFile.GetFileName(), false) + ".rgd";
-	ZipWriter writer;
-	writer.Initialize(FolderUtilities::CombinePath(FolderUtilities::GetRecentGamesFolder(), filename));
-
-	std::stringstream pngStream;
-	_emu->GetVideoDecoder()->TakeScreenshot(pngStream);
-	writer.AddFile(pngStream, "Screenshot.png");
-
-	std::stringstream stateStream;
-	SaveStateManager::SaveState(stateStream);
-	writer.AddFile(stateStream, "Savestate.mss");
-
-	std::stringstream romInfoStream;
-	romInfoStream << romName << std::endl;
-	romInfoStream << romPath << std::endl;
-	romInfoStream << patchPath << std::endl;
-
-	FrameInfo baseFrameSize = _emu->GetVideoDecoder()->GetBaseFrameInfo(true);
-	double aspectRatio = _emu->GetSettings()->GetAspectRatio(_emu->GetRegion(), baseFrameSize);
-	if(aspectRatio > 0) {
-		romInfoStream << "aspectratio=" << aspectRatio << std::endl;
-	}
-
-	writer.AddFile(romInfoStream, "RomInfo.txt");
-	writer.Save();
 }
 
 void SaveStateManager::LoadRecentGame(string filename, bool resetGame)
 {
-	VirtualFile file(filename);
-	if(!file.IsValid()) {
-		MessageManager::DisplayMessage("Error", "CouldNotLoadFile", file.GetFileName());
-		return;
-	}
-
-	ZipReader reader;
-	reader.LoadArchive(filename);
-
-	stringstream romInfoStream, stateStream;
-	reader.GetStream("RomInfo.txt", romInfoStream);
-	reader.GetStream("Savestate.mss", stateStream);
-
-	string romName, romPath, patchPath;
-	std::getline(romInfoStream, romName);
-	std::getline(romInfoStream, romPath);
-	std::getline(romInfoStream, patchPath);
-
-	try {
-		if(_emu->LoadRom(romPath, patchPath)) {
-			if(!resetGame) {
-				auto lock = _emu->AcquireLock();
-				SaveStateManager::LoadState(stateStream);
-			}
-		}
-	} catch(std::exception&) { 
-		_emu->Stop(true);
-	}
 }
 
 int32_t SaveStateManager::GetSaveStatePreview(string saveStatePath, uint8_t* pngData)

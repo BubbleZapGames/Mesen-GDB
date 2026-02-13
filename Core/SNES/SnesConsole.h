@@ -29,7 +29,6 @@ class SaveStateManager;
 class RewindManager;
 class BatteryManager;
 class CheatManager;
-class MovieManager;
 class FrameLimiter;
 class DebugStats;
 class Msu1;

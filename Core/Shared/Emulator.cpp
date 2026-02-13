@@ -17,14 +17,11 @@
 #include "Shared/ShortcutKeyHandler.h"
 #include "Shared/EmulatorLock.h"
 #include "Shared/DebuggerRequest.h"
-#include "Shared/Movies/MovieManager.h"
 #include "Shared/BatteryManager.h"
 #include "Shared/CheatManager.h"
 #include "Shared/SystemActionManager.h"
 #include "Shared/TimingInfo.h"
 #include "Shared/HistoryViewer.h"
-#include "Netplay/GameServer.h"
-#include "Netplay/GameClient.h"
 #include "Shared/Interfaces/IConsole.h"
 #include "Shared/Interfaces/IBarcodeReader.h"
 #include "Shared/Interfaces/ITapeRecorder.h"
@@ -60,10 +57,7 @@ Emulator::Emulator() :
 	_videoDecoder(new VideoDecoder(this)),
 	_saveStateManager(new SaveStateManager(this)),
 	_cheatManager(new CheatManager(this)),
-	_movieManager(new MovieManager(this)),
 	_historyViewer(new HistoryViewer(this)),
-	_gameServer(new GameServer(this)),
-	_gameClient(new GameClient(this)),
 	_rewindManager(new RewindManager(this))
 {
 	_paused = false;
@@ -98,9 +92,6 @@ void Emulator::Initialize(bool enableShortcuts)
 void Emulator::Release()
 {
 	Stop(true);
-
-	_gameClient->Disconnect();
-	_gameServer->StopServer();
 
 	_videoDecoder->StopThread();
 	_videoRenderer->StopThread();
@@ -298,7 +289,6 @@ void Emulator::Stop(bool sendNotification, bool preventRecentGameSave, bool save
 		_notificationManager->SendNotification(ConsoleNotificationType::BeforeEmulationStop);
 	}
 
-	_movieManager->Stop();
 	_videoDecoder->StopThread();
 	_rewindManager->Reset();
 
@@ -424,10 +414,6 @@ bool Emulator::InternalLoadRom(VirtualFile romFile, VirtualFile patchFile, bool 
 
 	_soundMixer->StopAudio();
 
-	if(!forPowerCycle) {
-		_movieManager->Stop();
-	}
-
 	//Keep copy of current memory types, to allow keeping ROM changes when power cycling
 	ConsoleMemoryInfo originalConsoleMemory[DebugUtilities::GetMemoryTypeCount()] = {};
 	memcpy(originalConsoleMemory, _consoleMemory, sizeof(_consoleMemory));
@@ -481,13 +467,11 @@ bool Emulator::InternalLoadRom(VirtualFile romFile, VirtualFile patchFile, bool 
 
 	uint32_t pollCounter = 0;
 	if(forPowerCycle && console->GetControlManager()) {
-		//When power cycling, poll counter must be preserved to allow movies to playback properly
 		pollCounter = console->GetControlManager()->GetPollCounter();
 	}
 
 	InitConsole(console, originalConsoleMemory, forPowerCycle);
 
-	//Restore pollcounter (used by movies when a power cycle is in the movie)
 	_console->GetControlManager()->SetPollCounter(pollCounter);
 
 	_rewindManager->InitHistory();

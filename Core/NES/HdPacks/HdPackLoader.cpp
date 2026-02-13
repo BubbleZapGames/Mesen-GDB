@@ -6,7 +6,6 @@
 #include "NES/HdPacks/HdNesPack.h"
 #include "NES/NesConsole.h"
 #include "Shared/MessageManager.h"
-#include "Utilities/ZipReader.h"
 #include "Utilities/FolderUtilities.h"
 #include "Utilities/StringUtilities.h"
 #include "Utilities/HexUtilities.h"
@@ -32,7 +31,6 @@ bool HdPackLoader::InitializeLoader(VirtualFile &romFile, HdPackData *data)
 
 	string hdPackPath = FolderUtilities::CombinePath(hdPackFolder, definitionPath);
 	if(ifstream(hdPackPath)) {
-		_loadFromZip = false;
 		_hdPackFolder = FolderUtilities::GetFolderName(hdPackPath);
 		return true;
 	}
@@ -45,7 +43,6 @@ bool HdPackLoader::LoadHdNesPack(string definitionFile, HdPackData &outData)
 	HdPackLoader loader;
 	if(ifstream(definitionFile)) {
 		loader._data = &outData;
-		loader._loadFromZip = false;
 		loader._hdPackFolder = FolderUtilities::GetFolderName(definitionFile);
 		return loader.LoadPack();
 	}
@@ -63,13 +60,9 @@ bool HdPackLoader::LoadHdNesPack(VirtualFile &romFile, HdPackData &outData)
 
 bool HdPackLoader::CheckFile(string filename)
 {
-	if(_loadFromZip) {
-		return _reader.CheckFile(filename);
-	} else {
-		ifstream file(FolderUtilities::CombinePath(_hdPackFolder, filename), ios::in | ios::binary);
-		if(file.good()) {
-			return true;
-		}
+	ifstream file(FolderUtilities::CombinePath(_hdPackFolder, filename), ios::in | ios::binary);
+	if(file.good()) {
+		return true;
 	}
 
 	return false;
@@ -79,22 +72,16 @@ bool HdPackLoader::LoadFile(string filename, vector<uint8_t> &fileData)
 {
 	fileData.clear();
 
-	if(_loadFromZip) {
-		if(_reader.ExtractFile(filename, fileData)) {
-			return true;
-		}
-	} else {
-		ifstream file(FolderUtilities::CombinePath(_hdPackFolder, filename), ios::in | ios::binary);
-		if(file.good()) {
-			file.seekg(0, ios::end);
-			uint32_t fileSize = (uint32_t)file.tellg();
-			file.seekg(0, ios::beg);
+	ifstream file(FolderUtilities::CombinePath(_hdPackFolder, filename), ios::in | ios::binary);
+	if(file.good()) {
+		file.seekg(0, ios::end);
+		uint32_t fileSize = (uint32_t)file.tellg();
+		file.seekg(0, ios::beg);
 
-			fileData.resize(fileSize);
-			file.read((char*)fileData.data(), fileSize);
-			
-			return true;
-		}
+		fileData.resize(fileSize);
+		file.read((char*)fileData.data(), fileSize);
+
+		return true;
 	}
 
 	return false;
@@ -304,11 +291,7 @@ void HdPackLoader::ProcessPatchTag(vector<string> &tokens)
 	}
 
 	std::transform(tokens[1].begin(), tokens[1].end(), tokens[1].begin(), ::toupper);
-	if(_loadFromZip) {
-		_data->PatchesByHash[tokens[1]] = VirtualFile(_hdPackFolder, tokens[0]);
-	} else {
-		_data->PatchesByHash[tokens[1]] = FolderUtilities::CombinePath(_hdPackFolder, tokens[0]);
-	}
+	_data->PatchesByHash[tokens[1]] = FolderUtilities::CombinePath(_hdPackFolder, tokens[0]);
 }
 
 void HdPackLoader::ProcessTileTag(vector<string> &tokens, vector<HdPackCondition*> conditions)
@@ -762,11 +745,7 @@ void HdPackLoader::ProcessBgmTag(vector<string> &tokens)
 			track.LoopPosition = (uint32_t)std::stoul(tokens[3]);
 		}
 
-		if(_loadFromZip) {
-			track.Filename = 	VirtualFile(_hdPackFolder, tokens[2]);
-		} else {
-			track.Filename = FolderUtilities::CombinePath(_hdPackFolder, tokens[2]);
-		}
+		track.Filename = FolderUtilities::CombinePath(_hdPackFolder, tokens[2]);
 		_data->BgmFilesById[trackId] = track;
 	}
 }
@@ -778,12 +757,7 @@ void HdPackLoader::ProcessSfxTag(vector<string> &tokens)
 
 	int trackId = ProcessSoundTrack(tokens[0], tokens[1], tokens[2]);
 	if(trackId >= 0) {
-		if(_loadFromZip) {
-			VirtualFile file(_hdPackFolder, tokens[2]);
-			_data->SfxFilesById[trackId] = file;
-		} else {
-			_data->SfxFilesById[trackId] = FolderUtilities::CombinePath(_hdPackFolder, tokens[2]);
-		}
+		_data->SfxFilesById[trackId] = FolderUtilities::CombinePath(_hdPackFolder, tokens[2]);
 	}
 }
 

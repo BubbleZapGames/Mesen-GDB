@@ -1,7 +1,6 @@
 #include "pch.h"
 #include "Shared/Video/SystemHud.h"
 #include "Shared/Video/DebugHud.h"
-#include "Shared/Movies/MovieManager.h"
 #include "Shared/MessageManager.h"
 #include "Shared/BaseControlManager.h"
 #include "Shared/Video/DrawStringCommand.h"
@@ -25,24 +24,16 @@ void SystemHud::Draw(DebugHud* hud, uint32_t width, uint32_t height) const
 
 	if(_emu->IsRunning()) {
 		EmuSettings* settings = _emu->GetSettings();
-		bool showMovieIcons = settings->GetPreferences().ShowMovieIcons;
-		int xOffset = 0;
 		if(_emu->IsPaused()) {
 			DrawPauseIcon(hud);
-		} else if(showMovieIcons && _emu->GetMovieManager()->Playing()) {
-			DrawPlayIcon(hud);
-			xOffset += 12;
-		} else if(showMovieIcons && _emu->GetMovieManager()->Recording()) {
-			DrawRecordIcon(hud);
-			xOffset += 12;
 		}
 
 		bool showTurboRewindIcons = settings->GetPreferences().ShowTurboRewindIcons;
 		if(!_emu->IsPaused() && showTurboRewindIcons) {
 			if(settings->CheckFlag(EmulationFlags::Rewind)) {
-				DrawTurboRewindIcon(hud, true, xOffset);
+				DrawTurboRewindIcon(hud, true, 0);
 			} else if(settings->CheckFlag(EmulationFlags::Turbo)) {
-				DrawTurboRewindIcon(hud, false, xOffset);
+				DrawTurboRewindIcon(hud, false, 0);
 			}
 		}
 	}

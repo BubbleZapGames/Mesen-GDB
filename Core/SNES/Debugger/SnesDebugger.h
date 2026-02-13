@@ -15,7 +15,6 @@ class MemoryAccessCounter;
 class SnesMemoryManager;
 class SnesCodeDataLogger;
 class EmuSettings;
-class ScriptManager;
 class BaseEventManager;
 class MemoryMappings;
 class BreakpointManager;

@@ -4,7 +4,6 @@
 #include "Debugger/CallstackManager.h"
 #include "Debugger/BreakpointManager.h"
 #include "Debugger/CodeDataLogger.h"
-#include "Debugger/ScriptManager.h"
 #include "Debugger/Debugger.h"
 #include "Debugger/MemoryDumper.h"
 #include "Debugger/MemoryAccessCounter.h"

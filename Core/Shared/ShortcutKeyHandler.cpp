@@ -8,11 +8,9 @@
 #include "Shared/RewindManager.h"
 #include "Shared/NotificationManager.h"
 #include "Shared/SaveStateManager.h"
-#include "Shared/Movies/MovieManager.h"
 #include "Shared/BaseControlManager.h"
 #include "Shared/Interfaces/IBarcodeReader.h"
 #include "Shared/Interfaces/ITapeRecorder.h"
-#include "Netplay/GameClient.h"
 
 ShortcutKeyHandler::ShortcutKeyHandler(Emulator* emu)
 {
@@ -122,25 +120,21 @@ void ShortcutKeyHandler::ProcessRunSingleFrame()
 bool ShortcutKeyHandler::IsShortcutAllowed(EmulatorShortcut shortcut, uint32_t shortcutParam)
 {
 	bool isRunning = _emu->IsRunning();
-	bool isNetplayClient = _emu->GetGameClient()->Connected();
-	bool isMoviePlaying = _emu->GetMovieManager()->Playing();
-	bool isMovieRecording = _emu->GetMovieManager()->Recording();
-	bool isMovieActive = isMoviePlaying || isMovieRecording;
 
 	switch(shortcut) {
 		case EmulatorShortcut::ToggleRewind:
 		case EmulatorShortcut::Rewind:
 		case EmulatorShortcut::RewindTenSecs:
 		case EmulatorShortcut::RewindOneMin:
-			return isRunning && !isNetplayClient && !isMovieRecording;
+			return isRunning;
 
 		case EmulatorShortcut::IncreaseSpeed:
 		case EmulatorShortcut::DecreaseSpeed:
 		case EmulatorShortcut::MaxSpeed:
-			return !isNetplayClient;
+			return true;
 
 		case EmulatorShortcut::Pause:
-			return isRunning && !isNetplayClient;
+			return isRunning;
 
 		case EmulatorShortcut::Reset:
 		case EmulatorShortcut::ExecReset:
@@ -148,17 +142,17 @@ bool ShortcutKeyHandler::IsShortcutAllowed(EmulatorShortcut shortcut, uint32_t s
 		case EmulatorShortcut::ExecPowerCycle:
 		case EmulatorShortcut::ReloadRom:
 		case EmulatorShortcut::ExecReloadRom:
-			return isRunning && !isNetplayClient && !isMoviePlaying;
+			return isRunning;
 
 		case EmulatorShortcut::PowerOff:
 		case EmulatorShortcut::ExecPowerOff:
-			return isRunning && !isNetplayClient;
+			return isRunning;
 
 		case EmulatorShortcut::TakeScreenshot:
 			return isRunning;
 
 		case EmulatorShortcut::ToggleCheats:
-			return !isNetplayClient && !isMovieActive;
+			return true;
 
 		case EmulatorShortcut::SelectSaveSlot1: case EmulatorShortcut::SelectSaveSlot2: case EmulatorShortcut::SelectSaveSlot3: case EmulatorShortcut::SelectSaveSlot4: case EmulatorShortcut::SelectSaveSlot5:
 		case EmulatorShortcut::SelectSaveSlot6: case EmulatorShortcut::SelectSaveSlot7: case EmulatorShortcut::SelectSaveSlot8: case EmulatorShortcut::SelectSaveSlot9: case EmulatorShortcut::SelectSaveSlot10:
@@ -178,10 +172,10 @@ bool ShortcutKeyHandler::IsShortcutAllowed(EmulatorShortcut shortcut, uint32_t s
 		case EmulatorShortcut::LoadStateFromFile:
 		case EmulatorShortcut::LoadState:
 		case EmulatorShortcut::LoadLastSession:
-			return isRunning && !isNetplayClient && !isMovieActive;
+			return isRunning;
 
 		case EmulatorShortcut::InputBarcode:
-			if(isRunning && !isNetplayClient && !isMoviePlaying) {
+			if(isRunning) {
 				shared_ptr<IConsole> console = _emu->GetConsole();
 				if(console) {
 					return console->GetControlManager()->GetControlDevice<IBarcodeReader>() != nullptr;
@@ -192,7 +186,7 @@ bool ShortcutKeyHandler::IsShortcutAllowed(EmulatorShortcut shortcut, uint32_t s
 		case EmulatorShortcut::RecordTape:
 		case EmulatorShortcut::StopRecordTape:
 		case EmulatorShortcut::LoadTape: {
-			if(isRunning && !isNetplayClient && !isMoviePlaying) {
+			if(isRunning) {
 				shared_ptr<IConsole> console = _emu->GetConsole();
 				if(console) {
 					shared_ptr<ITapeRecorder> recorder = console->GetControlManager()->GetControlDevice<ITapeRecorder>();

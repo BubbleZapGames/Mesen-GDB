@@ -28,12 +28,10 @@
 #include "Shared/Audio/SoundMixer.h"
 #include "Shared/SaveStateManager.h"
 #include "Shared/CheatManager.h"
-#include "Shared/Movies/MovieManager.h"
 #include "Shared/BaseControlManager.h"
 #include "Shared/Interfaces/IBattery.h"
 #include "Shared/EmuSettings.h"
 #include "Shared/NotificationManager.h"
-#include "Netplay/GameClient.h"
 #include "Debugger/DebugTypes.h"
 #include "Utilities/Serializer.h"
 #include "Utilities/sha1.h"
@@ -406,18 +404,16 @@ void NesConsole::SaveBattery()
 ShortcutState NesConsole::IsShortcutAllowed(EmulatorShortcut shortcut, uint32_t shortcutParam)
 {
 	bool isRunning = _emu->IsRunning();
-	bool isNetplayClient = _emu->GetGameClient()->Connected();
-	bool isMoviePlaying = _emu->GetMovieManager()->Playing();
 	RomFormat romFormat = GetRomFormat();
-	
+
 	switch(shortcut) {
 		case EmulatorShortcut::FdsEjectDisk:
 		case EmulatorShortcut::FdsInsertNextDisk:
 		case EmulatorShortcut::FdsSwitchDiskSide:
-			return (ShortcutState)(isRunning && !isNetplayClient && !isMoviePlaying && romFormat == RomFormat::Fds);
+			return (ShortcutState)(isRunning && romFormat == RomFormat::Fds);
 
 		case EmulatorShortcut::FdsInsertDiskNumber:
-			if(isRunning && !isNetplayClient && !isMoviePlaying && romFormat == RomFormat::Fds) {
+			if(isRunning && romFormat == RomFormat::Fds) {
 				Fds* fds = dynamic_cast<Fds*>(_mapper.get());
 				return (ShortcutState)(fds && shortcutParam < fds->GetSideCount());
 			}
@@ -426,12 +422,12 @@ ShortcutState NesConsole::IsShortcutAllowed(EmulatorShortcut shortcut, uint32_t 
 		case EmulatorShortcut::VsInsertCoin1:
 		case EmulatorShortcut::VsInsertCoin2:
 		case EmulatorShortcut::VsServiceButton:
-			return (ShortcutState)(isRunning && !isNetplayClient && !isMoviePlaying && (romFormat == RomFormat::VsSystem || romFormat == RomFormat::VsDualSystem));
+			return (ShortcutState)(isRunning && (romFormat == RomFormat::VsSystem || romFormat == RomFormat::VsDualSystem));
 
 		case EmulatorShortcut::VsInsertCoin3:
 		case EmulatorShortcut::VsInsertCoin4:
 		case EmulatorShortcut::VsServiceButton2:
-			return (ShortcutState)(isRunning && !isNetplayClient && !isMoviePlaying && romFormat == RomFormat::VsDualSystem);
+			return (ShortcutState)(isRunning && romFormat == RomFormat::VsDualSystem);
 	}
 
 	return ShortcutState::Default;

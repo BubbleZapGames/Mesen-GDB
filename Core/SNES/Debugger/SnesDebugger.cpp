@@ -25,7 +25,6 @@
 #include "Debugger/MemoryDumper.h"
 #include "Debugger/MemoryAccessCounter.h"
 #include "Debugger/ExpressionEvaluator.h"
-#include "Debugger/ScriptManager.h"
 #include "Debugger/Debugger.h"
 #include "Debugger/CodeDataLogger.h"
 #include "Debugger/StepBackManager.h"

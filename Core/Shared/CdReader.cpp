@@ -65,9 +65,6 @@ bool CdReader::LoadCue(VirtualFile& cueFile, DiscInfo& disc)
 			filename = StringUtilities::Trim(filename);
 			if(!filename.empty()) {
 				VirtualFile dataFile = cueFile.GetFolderPath() + filename;
-				if(cueFile.IsArchive()) {
-					dataFile = VirtualFile(cueFile.GetFilePath(), filename);
-				}
 				files.push_back({ dataFile });
 			} else {
 				MessageManager::Log("[CUE] Invalid FILE entry");

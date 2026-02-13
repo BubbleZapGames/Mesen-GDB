@@ -7,7 +7,6 @@ enum class EventType
 	StartFrame,
 	EndFrame,
 	Reset,
-	ScriptEnded,
 	InputPolled,
 	StateLoaded,
 	StateSaved,

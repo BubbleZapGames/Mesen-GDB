@@ -10,7 +10,6 @@
 #include "Shared/EmuSettings.h"
 #include "Shared/BatteryManager.h"
 #include "Shared/BaseControlManager.h"
-#include "Shared/Movies/MovieManager.h"
 #include "Shared/NotificationManager.h"
 #include "Shared/FirmwareHelper.h"
 #include "Utilities/Patches/IpsPatcher.h"
@@ -595,7 +594,7 @@ bool Fds::IsDiskInserted()
 
 bool Fds::IsAutoInsertDiskEnabled()
 {
-	return !_disableAutoInsertDisk && _settings->FdsAutoInsertDisk && !_emu->GetMovieManager()->Playing() && !_emu->GetMovieManager()->Recording();
+	return !_disableAutoInsertDisk && _settings->FdsAutoInsertDisk;
 }
 
 vector<MapperStateEntry> Fds::GetMapperStateEntries()

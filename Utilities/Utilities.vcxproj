@@ -183,7 +183,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="ArchiveReader.h" />
+
     <ClInclude Include="Audio\blip_buf.h" />
     <ClInclude Include="Audio\CrossFeedFilter.h" />
     <ClInclude Include="Audio\Equalizer.h" />
@@ -244,7 +244,7 @@
     <ClInclude Include="spng.h" />
     <ClInclude Include="StaticFor.h" />
     <ClInclude Include="StringUtilities.h" />
-    <ClInclude Include="SZReader.h" />
+
     <ClInclude Include="UPnPPortMapper.h" />
     <ClInclude Include="SimpleLock.h" />
     <ClInclude Include="Socket.h" />
@@ -263,11 +263,10 @@
     <ClInclude Include="VirtualFile.h" />
     <ClInclude Include="xBRZ\config.h" />
     <ClInclude Include="xBRZ\xbrz.h" />
-    <ClInclude Include="ZipReader.h" />
-    <ClInclude Include="ZipWriter.h" />
+
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ArchiveReader.cpp" />
+
     <ClCompile Include="Audio\blip_buf.cpp" />
     <ClCompile Include="Audio\CrossFeedFilter.cpp" />
     <ClCompile Include="Audio\Equalizer.cpp" />
@@ -398,7 +397,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Profile|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="SZReader.cpp" />
+
     <ClCompile Include="Timer.cpp" />
     <ClCompile Include="UPnPPortMapper.cpp" />
     <ClCompile Include="UTF8Util.cpp" />
@@ -414,8 +413,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='PGO Optimize|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="ZipReader.cpp" />
-    <ClCompile Include="ZipWriter.cpp" />
+
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

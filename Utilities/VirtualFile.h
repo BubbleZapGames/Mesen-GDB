@@ -8,8 +8,6 @@ private:
 	constexpr static int ChunkSize = 256 * 1024;
 
 	string _path = "";
-	string _innerFile = "";
-	int32_t _innerFileIndex = -1;
 	vector<uint8_t> _data;
 	int64_t _fileSize = -1;
 
@@ -24,7 +22,6 @@ public:
 	static const std::initializer_list<string> RomExtensions;
 
 	VirtualFile();
-	VirtualFile(const string &archivePath, const string innerFile);
 	VirtualFile(const string &file);
 	VirtualFile(const void *buffer, size_t bufferSize, string fileName = "noname");
 	VirtualFile(std::istream &input, string filePath);
@@ -32,7 +29,6 @@ public:
 	operator std::string() const;
 	
 	bool IsValid();
-	bool IsArchive();
 	string GetFilePath();
 	string GetFolderPath();
 	string GetFileName();

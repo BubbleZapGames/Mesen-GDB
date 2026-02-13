@@ -3,7 +3,6 @@
 #include <unordered_set>
 #include "Utilities/FolderUtilities.h"
 #include "Utilities/CRC32.h"
-#include "Utilities/ArchiveReader.h"
 #include "Utilities/VirtualFile.h"
 
 #include "NES/Loaders/RomLoader.h"

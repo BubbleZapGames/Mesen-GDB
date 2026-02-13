@@ -3,7 +3,6 @@
 #include <iterator>
 #include "VirtualFile.h"
 #include "Utilities/sha1.h"
-#include "Utilities/ArchiveReader.h"
 #include "Utilities/StringUtilities.h"
 #include "Utilities/FolderUtilities.h"
 #include "Utilities/Patches/BpsPatcher.h"
@@ -25,24 +24,9 @@ VirtualFile::VirtualFile()
 {
 }
 
-VirtualFile::VirtualFile(const string& archivePath, const string innerFile)
-{
-	_path = archivePath;
-	_innerFile = innerFile;
-}
-
 VirtualFile::VirtualFile(const string& file)
 {
-	vector<string> tokens = StringUtilities::Split(file, '\x1');
-	_path = tokens[0];
-	if(tokens.size() > 1) {
-		_innerFile = tokens[1];
-		if(tokens.size() > 2) {
-			try {
-				_innerFileIndex = std::stoi(tokens[2]);
-			} catch(std::exception&) {}
-		}
-	}
+	_path = file;
 }
 
 VirtualFile::VirtualFile(const void* buffer, size_t bufferSize, string fileName)
@@ -61,17 +45,7 @@ VirtualFile::VirtualFile(std::istream& input, string filePath)
 
 VirtualFile::operator std::string() const
 {
-	if(_innerFile.empty()) {
-		return _path;
-	} else if(_path.empty()) {
-		throw std::runtime_error("Cannot convert to string");
-	} else {
-		if(_innerFileIndex >= 0) {
-			return _path + "\x1" + _innerFile + "\x1" + std::to_string(_innerFileIndex);
-		} else {
-			return _path + "\x1" + _innerFile;
-		}
-	}
+	return _path;
 }
 
 void VirtualFile::FromStream(std::istream& input, vector<uint8_t>& output)
@@ -87,23 +61,9 @@ void VirtualFile::FromStream(std::istream& input, vector<uint8_t>& output)
 void VirtualFile::LoadFile()
 {
 	if(_data.size() == 0) {
-		if(!_innerFile.empty()) {
-			unique_ptr<ArchiveReader> reader = ArchiveReader::GetReader(_path);
-			if(reader) {
-				if(_innerFileIndex >= 0) {
-					vector<string> filelist = reader->GetFileList(VirtualFile::RomExtensions);
-					if((int32_t)filelist.size() > _innerFileIndex) {
-						reader->ExtractFile(filelist[_innerFileIndex], _data);
-					}
-				} else {
-					reader->ExtractFile(_innerFile, _data);
-				}
-			}
-		} else {
-			ifstream input(_path, std::ios::in | std::ios::binary);
-			if(input.good()) {
-				FromStream(input, _data);
-			}
+		ifstream input(_path, std::ios::in | std::ios::binary);
+		if(input.good()) {
+			FromStream(input, _data);
 		}
 	}
 }
@@ -114,30 +74,11 @@ bool VirtualFile::IsValid()
 		return true;
 	}
 
-	if(!_innerFile.empty()) {
-		unique_ptr<ArchiveReader> reader = ArchiveReader::GetReader(_path);
-		if(reader) {
-			vector<string> filelist = reader->GetFileList();
-			if(_innerFileIndex >= 0) {
-				if((int32_t)filelist.size() > _innerFileIndex) {
-					return true;
-				}
-			} else {
-				return std::find(filelist.begin(), filelist.end(), _innerFile) != filelist.end();
-			}
-		}
-	} else {
-		ifstream input(_path, std::ios::in | std::ios::binary);
-		if(input) {
-			return true;
-		}
+	ifstream input(_path, std::ios::in | std::ios::binary);
+	if(input) {
+		return true;
 	}
 	return false;
-}
-
-bool VirtualFile::IsArchive()
-{
-	return !_innerFile.empty();
 }
 
 string VirtualFile::GetFilePath()
@@ -152,7 +93,7 @@ string VirtualFile::GetFolderPath()
 
 string VirtualFile::GetFileName()
 {
-	return _innerFile.empty() ? FolderUtilities::GetFilename(_path, true) : _innerFile;
+	return FolderUtilities::GetFilename(_path, true);
 }
 
 string VirtualFile::GetFileExtension()
@@ -179,9 +120,6 @@ size_t VirtualFile::GetSize()
 	} else {
 		if(_fileSize >= 0) {
 			return _fileSize;
-		} else if(IsArchive()) {
-			LoadFile();
-			return _data.size();
 		} else {
 			ifstream input(_path, std::ios::in | std::ios::binary);
 			if(input) {
@@ -202,11 +140,6 @@ bool VirtualFile::CheckFileSignature(vector<string> signatures, bool loadArchive
 		if(loadArchives) {
 			LoadFile();
 		} else {
-			if(!_innerFile.empty()) {
-				//Don't check/load archives
-				return false;
-			}
-
 			ifstream input(_path, std::ios::in | std::ios::binary);
 			if(input.good()) {
 				//Only load the first 512 bytes of the file

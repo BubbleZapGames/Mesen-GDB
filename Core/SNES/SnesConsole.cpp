@@ -36,7 +36,6 @@
 #include "Shared/EventType.h"
 #include "SNES/RegisterHandlerA.h"
 #include "SNES/RegisterHandlerB.h"
-#include "Utilities/ArchiveReader.h"
 
 SnesConsole::SnesConsole(Emulator* emu)
 {
@@ -153,19 +152,7 @@ LoadRomResult SnesConsole::LoadRom(VirtualFile& romFile)
 bool SnesConsole::LoadSpcFile(VirtualFile& romFile)
 {
 	_spc->LoadSpcFile(_cart->GetSpcData());
-	if(romFile.IsArchive()) {
-		string archivePath = romFile.GetFilePath();
-		unique_ptr<ArchiveReader> reader = ArchiveReader::GetReader(archivePath);
-		if(reader) {
-			for(string& spcFile : reader->GetFileList({ ".spc" })) {
-				_spcPlaylist.push_back((string)VirtualFile(archivePath, spcFile));
-			}
-		} else {
-			return false;
-		}
-	} else {
-		_spcPlaylist = FolderUtilities::GetFilesInFolder(romFile.GetFolderPath(), { ".spc" }, false);
-	}
+	_spcPlaylist = FolderUtilities::GetFilesInFolder(romFile.GetFolderPath(), { ".spc" }, false);
 
 	std::sort(_spcPlaylist.begin(), _spcPlaylist.end());
 	auto result = std::find(_spcPlaylist.begin(), _spcPlaylist.end(), (string)romFile);
