@@ -24,7 +24,13 @@ SdlRenderer::~SdlRenderer()
 	_emu->GetVideoRenderer()->UnregisterRenderingDevice(this);
 
 	Cleanup();
-	delete[] _frameBuffer;	
+
+	if(_ownsWindow && _sdlWindow) {
+		SDL_DestroyWindow(_sdlWindow);
+		_sdlWindow = nullptr;
+	}
+
+	delete[] _frameBuffer;
 }
 
 void SdlRenderer::LogSdlError(const char* msg)
@@ -40,30 +46,44 @@ void SdlRenderer::SetExclusiveFullscreenMode(bool fullscreen, void* windowHandle
 
 bool SdlRenderer::Init()
 {
-	const char* originalHint = SDL_GetHint("SDL_VIDEODRIVER");
-	SDL_SetHint("SDL_VIDEODRIVER", "x11");
-	if(SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-		LogSdlError("[SDL] Failed to initialize video subsystem.");
-		return false;
-	};
-
-	_sdlWindow = SDL_CreateWindowFrom(_windowHandle);
 	if(!_sdlWindow) {
-		MessageManager::Log("[SDL] Failed to create window from handle with SDL_VIDEODRIVER=x11, retry with default...");
-
-		SDL_QuitSubSystem(SDL_INIT_VIDEO);
-		SDL_SetHint("SDL_VIDEODRIVER", originalHint);
+		const char* originalHint = SDL_GetHint("SDL_VIDEODRIVER");
+		SDL_SetHint("SDL_VIDEODRIVER", "x11");
 		if(SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
 			LogSdlError("[SDL] Failed to initialize video subsystem.");
 			return false;
-		}
+		};
 
-		_sdlWindow = SDL_CreateWindowFrom(_windowHandle);
-		if(!_sdlWindow) {
-			LogSdlError("[SDL] Failed to create window from handle.");
-			return false;
+		if(_windowHandle) {
+			_sdlWindow = SDL_CreateWindowFrom(_windowHandle);
+			if(!_sdlWindow) {
+				MessageManager::Log("[SDL] Failed to create window from handle with SDL_VIDEODRIVER=x11, retry with default...");
+
+				SDL_QuitSubSystem(SDL_INIT_VIDEO);
+				SDL_SetHint("SDL_VIDEODRIVER", originalHint);
+				if(SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+					LogSdlError("[SDL] Failed to initialize video subsystem.");
+					return false;
+				}
+
+				_sdlWindow = SDL_CreateWindowFrom(_windowHandle);
+				if(!_sdlWindow) {
+					LogSdlError("[SDL] Failed to create window from handle.");
+					return false;
+				} else {
+					MessageManager::Log("[SDL] Window creation succeeded with default driver.");
+				}
+			}
 		} else {
-			MessageManager::Log("[SDL] Window creation succeeded with default driver.");
+			_sdlWindow = SDL_CreateWindow("Mesen",
+				SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+				_requiredWidth * 2, _requiredHeight * 2,
+				SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+			if(!_sdlWindow) {
+				LogSdlError("[SDL] Failed to create standalone window.");
+				return false;
+			}
+			_ownsWindow = true;
 		}
 	}
 
@@ -97,7 +117,9 @@ bool SdlRenderer::InitTexture()
 		return false;
 	}
 
-	SDL_SetWindowSize(_sdlWindow, _screenWidth, _screenHeight);
+	if(_ownsWindow) {
+		SDL_SetWindowSize(_sdlWindow, _screenWidth, _screenHeight);
+	}
 
 	return true;
 }

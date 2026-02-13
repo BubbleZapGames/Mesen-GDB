@@ -20,6 +20,7 @@ private:
 	Emulator* _emu;
 
 	void* _windowHandle;
+	bool _ownsWindow = false;
 	SDL_Window* _sdlWindow = nullptr;
 	SDL_Renderer *_sdlRenderer = nullptr;
 	SDL_Texture* _sdlTexture = nullptr;
