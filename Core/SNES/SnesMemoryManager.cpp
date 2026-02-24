@@ -16,6 +16,7 @@
 #include "Utilities/Serializer.h"
 #include "Utilities/HexUtilities.h"
 #include "Shared/MemoryOperationType.h"
+#include "GDB/bus_logging.h"
 
 void SnesMemoryManager::Initialize(SnesConsole *console)
 {
@@ -345,6 +346,10 @@ void SnesMemoryManager::PeekBlock(uint32_t addr, uint8_t *dest)
 void SnesMemoryManager::Write(uint32_t addr, uint8_t value, MemoryOperationType type)
 {
 	(this->*_execWrite)();
+
+	if(BusLogging::logBus.load(std::memory_order_relaxed)) {
+		fprintf(stdout, "[BUS] W $%06X = $%02X\n", addr, value);
+	}
 
 	if(_emu->ProcessMemoryWrite<CpuType::Snes>(addr, value, type)) {
 		IMemoryHandler* handler = _mappings.GetHandler(addr);

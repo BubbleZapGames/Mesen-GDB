@@ -545,10 +545,15 @@ void DebuggerCli::Run()
 			break;
 		}
 
-		if(line.empty()) continue;
+		if(line.empty()) {
+			if(_lastCommand.empty()) continue;
+			line = _lastCommand;
+		}
 
 		auto tokens = Tokenize(line);
 		if(tokens.empty()) continue;
+
+		_lastCommand = line;
 
 		const std::string& cmd = tokens[0];
 

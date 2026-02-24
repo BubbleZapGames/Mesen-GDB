@@ -27,6 +27,7 @@ private:
 	uint32_t _nextBreakpointId = 1;
 	bool _jsonOutput;
 	bool _quit = false;
+	std::string _lastCommand;
 
 	void PrintState();
 	void PrintDisassemblyAtPC(int lines = 1);

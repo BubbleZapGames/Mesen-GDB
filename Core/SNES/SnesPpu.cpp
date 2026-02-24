@@ -18,6 +18,7 @@
 #include "Shared/MessageManager.h"
 #include "Shared/EventType.h"
 #include "Shared/RewindManager.h"
+#include "GDB/bus_logging.h"
 #include "Utilities/HexUtilities.h"
 #include "Utilities/Serializer.h"
 
@@ -2045,6 +2046,9 @@ void SnesPpu::Write(uint32_t addr, uint8_t value)
 		case 0x2118:
 			//VMDATAL - VRAM Data Write low byte
 			if(CanAccessVram()) {
+				if(BusLogging::logVram.load(std::memory_order_relaxed)) {
+					fprintf(stdout, "[VRAM] W $%04X.lo = $%02X\n", GetVramAddress(), value);
+				}
 				//Only write the value if in vblank or forced blank (writes to VRAM outside vblank/forced blank are not allowed)
 				_emu->ProcessPpuWrite<CpuType::Snes>(GetVramAddress() << 1, value, MemoryType::SnesVideoRam);
 				_vram[GetVramAddress()] = value | (_vram[GetVramAddress()] & 0xFF00);
@@ -2059,11 +2063,14 @@ void SnesPpu::Write(uint32_t addr, uint8_t value)
 		case 0x2119:
 			//VMDATAH - VRAM Data Write high byte
 			if(CanAccessVram()) {
+				if(BusLogging::logVram.load(std::memory_order_relaxed)) {
+					fprintf(stdout, "[VRAM] W $%04X.hi = $%02X\n", GetVramAddress(), value);
+				}
 				//Only write the value if in vblank or forced blank (writes to VRAM outside vblank/forced blank are not allowed)
 				_emu->ProcessPpuWrite<CpuType::Snes>((GetVramAddress() << 1) + 1, value, MemoryType::SnesVideoRam);
-				_vram[GetVramAddress()] = (value << 8) | (_vram[GetVramAddress()] & 0xFF); 
+				_vram[GetVramAddress()] = (value << 8) | (_vram[GetVramAddress()] & 0xFF);
 			}
-			
+
 			//The VRAM address is incremented even outside of vblank/forced blank
 			if(_state.VramAddrIncrementOnSecondReg) {
 				_state.VramAddress = (_state.VramAddress + _state.VramIncrementValue) & 0x7FFF;
