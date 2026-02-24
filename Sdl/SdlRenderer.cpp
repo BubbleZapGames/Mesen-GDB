@@ -6,6 +6,8 @@
 #include "Core/Shared/EmuSettings.h"
 #include "Core/Shared/MessageManager.h"
 #include "Core/Shared/RenderedFrame.h"
+#include <csignal>
+#include <unistd.h>
 
 SimpleLock SdlRenderer::_frameLock;
 
@@ -244,6 +246,15 @@ void SdlRenderer::UpdateHudTexture(HudRenderInfo& hud, uint32_t* src)
 
 void SdlRenderer::Render(RenderSurfaceInfo& emuHud, RenderSurfaceInfo& scriptHud)
 {
+	// Poll SDL events to catch window close
+	SDL_Event evt;
+	while(SDL_PollEvent(&evt)) {
+		if(evt.type == SDL_QUIT) {
+			kill(getpid(), SIGINT);
+			return;
+		}
+	}
+
 	SetScreenSize(_requiredWidth, _requiredHeight);
 	if(!_sdlRenderer || !_sdlTexture) {
 		return;
