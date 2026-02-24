@@ -18,6 +18,8 @@
 #include <fstream>
 #include <cstring>
 #include <algorithm>
+#include <poll.h>
+#include <unistd.h>
 
 // We need to populate Breakpoint's private fields directly.
 // This struct mirrors the exact memory layout of Breakpoint.
@@ -525,14 +527,21 @@ void DebuggerCli::Run()
 			break;
 		}
 		std::cout << "(mesen) " << std::flush;
+
+		// Poll stdin with timeout so we can check quit flag
+		bool gotInput = false;
+		struct pollfd pfd = { STDIN_FILENO, POLLIN, 0 };
+		while(!_listener->IsQuitRequested()) {
+			int ret = poll(&pfd, 1, 100);
+			if(ret > 0) { gotInput = true; break; }
+			if(ret < 0 && errno != EINTR) break;
+		}
+		if(!gotInput) break;
+
 		if(!std::getline(std::cin, line)) {
 			if(std::cin.eof()) break;  // EOF (Ctrl+D)
-			// Interrupted by signal (Ctrl+C) — clear error and treat as quit
 			std::cin.clear();
 			std::cout << "\n";
-			break;
-		}
-		if(_listener->IsQuitRequested()) {
 			break;
 		}
 
