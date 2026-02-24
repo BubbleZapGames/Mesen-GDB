@@ -8,6 +8,7 @@
 #include <memory>
 #include <cstring>
 #include <cstdlib>
+#include <unistd.h>
 
 #include "Core/Shared/Emulator.h"
 #include "Core/Shared/EmuSettings.h"
@@ -248,6 +249,7 @@ static int RunCliMode(CliArgs& args)
 		renderer->SetQuitCallback([listener]() {
 			fprintf(stderr, "Window closed, exiting.\n");
 			listener->RequestQuit();
+			close(STDIN_FILENO);
 		});
 	}
 
