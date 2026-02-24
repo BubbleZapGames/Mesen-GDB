@@ -197,7 +197,19 @@ void DebuggerCli::CmdRun()
 		if(dbg) dbg->Run();
 	}
 	std::cout << "Running... (press Ctrl+C to interrupt)" << std::endl;
-	_listener->WaitForBreak(0);  // wait indefinitely
+	bool hit = _listener->WaitForBreak(0);  // wait indefinitely (or until interrupted)
+	if(_listener->IsQuitRequested()) {
+		_quit = true;
+		return;
+	}
+	if(!hit) {
+		// Interrupted by Ctrl+C — pause the emulator
+		DebuggerRequest req = _emu->GetDebugger(false);
+		Debugger* dbg = req.GetDebugger();
+		if(dbg) dbg->Step(_primaryCpu, 1, StepType::Step);
+		_listener->WaitForBreak(1000);
+		std::cout << "\nInterrupted.\n";
+	}
 	PrintState();
 }
 
@@ -509,9 +521,19 @@ void DebuggerCli::Run()
 
 	std::string line;
 	while(!_quit) {
+		if(_listener->IsQuitRequested()) {
+			break;
+		}
 		std::cout << "(mesen) " << std::flush;
 		if(!std::getline(std::cin, line)) {
-			break;  // EOF
+			if(std::cin.eof()) break;  // EOF (Ctrl+D)
+			// Interrupted by signal (Ctrl+C) — clear error and treat as quit
+			std::cin.clear();
+			std::cout << "\n";
+			break;
+		}
+		if(_listener->IsQuitRequested()) {
+			break;
 		}
 
 		if(line.empty()) continue;

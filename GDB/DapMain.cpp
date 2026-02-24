@@ -28,6 +28,7 @@
 #include "debugger_cli.h"
 #include "batch_runner.h"
 #include "console_info.h"
+#include "bus_logging.h"
 
 #ifndef __APPLE__
 #include "Linux/LinuxKeyManager.h"
@@ -37,10 +38,15 @@
 #include "Sdl/SdlSoundManager.h"
 
 static std::atomic<bool> g_running{true};
+static std::shared_ptr<CliNotificationListener> g_listener;
 
 static void signalHandler(int)
 {
 	g_running = false;
+	auto listener = g_listener;
+	if(listener) {
+		listener->Interrupt();
+	}
 }
 
 struct CliArgs {
@@ -53,6 +59,8 @@ struct CliArgs {
 	std::vector<uint32_t> breakAddresses;
 	std::vector<BatchAssertion> assertions;
 	std::vector<MemoryDump> dumps;
+	bool logBus = false;
+	bool logVram = false;
 };
 
 static uint32_t ParseAddr(const std::string& s)
@@ -91,6 +99,8 @@ static void PrintUsage(const char* prog)
 		"  --check-mem <A>=<V>     Assert memory byte (batch)\n"
 		"  --check-mem16 <A>=<V>   Assert memory word (batch)\n"
 		"  --dump <type> <file>    Dump memory region (batch)\n"
+		"  --log-bus               Log SNES bus writes to stdout\n"
+		"  --log-vram              Log SNES VRAM writes to stdout\n"
 		"  --help                  Show this help\n"
 		"\n"
 		"Address formats: $1234, 0x1234, 1234, 00:8000\n"
@@ -118,6 +128,10 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			args.jsonOutput = true;
 		} else if(arg == "--headless") {
 			args.headless = true;
+		} else if(arg == "--log-bus") {
+			args.logBus = true;
+		} else if(arg == "--log-vram") {
+			args.logVram = true;
 		} else if(arg == "--break" && i + 1 < argc) {
 			args.breakAddresses.push_back(ParseAddr(argv[++i]));
 		} else if(arg == "--timeout" && i + 1 < argc) {
@@ -227,7 +241,15 @@ static int RunCliMode(CliArgs& args)
 
 	// 3. Register notification listener
 	auto listener = std::make_shared<CliNotificationListener>();
+	g_listener = listener;
 	emu->GetNotificationManager()->RegisterNotificationListener(listener);
+
+	if(renderer) {
+		renderer->SetQuitCallback([listener]() {
+			fprintf(stderr, "Window closed, exiting.\n");
+			listener->RequestQuit();
+		});
+	}
 
 	// 4. Enable ALL debugger flags before LoadRom — only the ones for the loaded
 	//    console will actually matter. This avoids needing to know console type upfront.
@@ -263,7 +285,11 @@ static int RunCliMode(CliArgs& args)
 	// 6. Wait for the initial break (fired by the internal Step inside LoadRom)
 	listener->WaitForBreak(5000);
 
-	// 7. Detect console type and primary CPU
+	// 7. Enable bus logging flags
+	BusLogging::logBus.store(args.logBus, std::memory_order_relaxed);
+	BusLogging::logVram.store(args.logVram, std::memory_order_relaxed);
+
+	// 8. Detect console type and primary CPU
 	CpuType primaryCpu = emu->GetCpuTypes()[0];
 	ConsoleType consoleType = emu->GetConsoleType();
 
@@ -363,6 +389,7 @@ static int RunCliMode(CliArgs& args)
 	}
 
 	// 11. Teardown
+	g_listener.reset();
 	emu->Stop(false);
 	emu->Release();
 

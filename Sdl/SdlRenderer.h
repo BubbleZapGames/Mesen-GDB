@@ -4,6 +4,7 @@
 #include "Utilities/SimpleLock.h"
 #include "Core/Shared/Video/VideoRenderer.h"
 #include "Core/Shared/RenderedFrame.h"
+#include <functional>
 
 class Emulator;
 
@@ -49,6 +50,7 @@ private:
 	uint32_t _newFrameBufferSize = 0;
 
 	bool _vsyncEnabled = false;
+	std::function<void()> _onQuit;
 
 	bool Init();
 	bool InitTexture();
@@ -70,4 +72,6 @@ public:
 	void OnRendererThreadStarted() override;
 
 	void SetExclusiveFullscreenMode(bool fullscreen, void* windowHandle) override;
+
+	void SetQuitCallback(std::function<void()> cb) { _onQuit = std::move(cb); }
 };
