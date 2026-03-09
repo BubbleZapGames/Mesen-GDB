@@ -17,6 +17,7 @@
 #include "Utilities/VirtualFile.h"
 #include "Utilities/magic_enum.hpp"
 #include "Utilities/Serializer.h"
+#include "Shared/SettingTypes.h"
 
 MesenMovie::MesenMovie(Emulator* emu, bool forTest)
 {
@@ -170,8 +171,22 @@ bool MesenMovie::Play(VirtualFile &file)
 
 	stringstream saveStateData;
 	if(_reader->GetStream("SaveState.mss", saveStateData)) {
-		if(!_emu->GetSaveStateManager()->LoadState(saveStateData)) {
-			MessageManager::Log("[Movie] Save state load failed, starting from power-on state");
+		string movieSha1 = LoadString(_settings, MovieKeys::Sha1);
+		string romSha1 = _emu->GetHash(HashType::Sha1);
+
+		if(!movieSha1.empty() && !romSha1.empty() && movieSha1 != romSha1) {
+			//ROM doesn't match movie — skip save state, force deterministic RAM
+			MessageManager::Log("[Movie] ROM SHA1 mismatch, skipping save state (movie: " + movieSha1 + ", rom: " + romSha1 + ")");
+			_emu->GetSettings()->GetSnesConfig().RamPowerOnState = RamState::AllZeros;
+			_emu->PowerCycle();
+			ApplySettings(settingsData);
+			_controlManager = _emu->GetConsole()->GetControlManager();
+		} else if(!_emu->GetSaveStateManager()->LoadState(saveStateData)) {
+			MessageManager::Log("[Movie] Save state load failed, restarting with zeroed RAM");
+			_emu->GetSettings()->GetSnesConfig().RamPowerOnState = RamState::AllZeros;
+			_emu->PowerCycle();
+			ApplySettings(settingsData);
+			_controlManager = _emu->GetConsole()->GetControlManager();
 		}
 	}
 
