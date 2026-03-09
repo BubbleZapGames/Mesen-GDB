@@ -23,6 +23,7 @@
 #include "Core/Debugger/DebugUtilities.h"
 #include "Utilities/VirtualFile.h"
 #include "Utilities/FolderUtilities.h"
+#include "Core/Shared/Movies/MovieManager.h"
 
 #include "cli_notification.h"
 #include "debugger_cli.h"
@@ -59,6 +60,7 @@ struct CliArgs {
 	std::vector<uint32_t> breakAddresses;
 	std::vector<BatchAssertion> assertions;
 	std::vector<MemoryDump> dumps;
+	std::string moviePath;
 	bool logBus = false;
 	bool logVram = false;
 };
@@ -99,6 +101,7 @@ static void PrintUsage(const char* prog)
 		"  --check-mem <A>=<V>     Assert memory byte (batch)\n"
 		"  --check-mem16 <A>=<V>   Assert memory word (batch)\n"
 		"  --dump <type> <file>    Dump memory region (batch)\n"
+		"  --movie <file.mmo>      Play a Mesen movie file (.mmo)\n"
 		"  --log-bus               Log SNES bus writes to stdout\n"
 		"  --log-vram              Log SNES VRAM writes to stdout\n"
 		"  --help                  Show this help\n"
@@ -128,6 +131,8 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			args.jsonOutput = true;
 		} else if(arg == "--headless") {
 			args.headless = true;
+		} else if(arg == "--movie" && i + 1 < argc) {
+			args.moviePath = argv[++i];
 		} else if(arg == "--log-bus") {
 			args.logBus = true;
 		} else if(arg == "--log-vram") {
@@ -366,7 +371,23 @@ static int RunCliMode(CliArgs& args)
 		}
 	}
 
-	// 10. Dispatch to batch or interactive mode
+	// 10. Start movie playback if requested
+	if(!args.moviePath.empty()) {
+		VirtualFile movieFile(args.moviePath);
+		if(!movieFile.IsValid()) {
+			fprintf(stderr, "Movie file not found: %s\n", args.moviePath.c_str());
+		} else {
+			fprintf(stderr, "[Movie] Loading: %s\n", args.moviePath.c_str());
+			emu->GetMovieManager()->Play(movieFile, true);
+			if(emu->GetMovieManager()->Playing()) {
+				fprintf(stderr, "[Movie] Playback started\n");
+			} else {
+				fprintf(stderr, "[Movie] Failed to start playback\n");
+			}
+		}
+	}
+
+	// 11. Dispatch to batch or interactive mode
 	int exitCode = 0;
 	if(args.batchMode) {
 		BatchRunner runner(emu.get(), listener, primaryCpu, consoleType,

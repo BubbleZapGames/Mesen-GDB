@@ -19,6 +19,7 @@
 #include "Shared/DebuggerRequest.h"
 #include "Shared/BatteryManager.h"
 #include "Shared/CheatManager.h"
+#include "Shared/Movies/MovieManager.h"
 #include "Shared/SystemActionManager.h"
 #include "Shared/TimingInfo.h"
 #include "Shared/HistoryViewer.h"
@@ -58,6 +59,7 @@ Emulator::Emulator() :
 	_saveStateManager(new SaveStateManager(this)),
 	_cheatManager(new CheatManager(this)),
 	_historyViewer(new HistoryViewer(this)),
+	_movieManager(new MovieManager(this)),
 	_rewindManager(new RewindManager(this))
 {
 	_paused = false;
@@ -268,6 +270,8 @@ void Emulator::Stop(bool sendNotification, bool preventRecentGameSave, bool save
 
 	_notificationManager->SendNotification(ConsoleNotificationType::BeforeGameUnload);
 
+	_movieManager->Stop();
+
 	ResetDebugger();
 
 	if(_emuThread) {
@@ -465,13 +469,19 @@ bool Emulator::InternalLoadRom(VirtualFile romFile, VirtualFile patchFile, bool 
 
 	_cheatManager->ClearCheats(false);
 
+	if(!forPowerCycle) {
+		_movieManager->Stop();
+	}
+
 	uint32_t pollCounter = 0;
 	if(forPowerCycle && console->GetControlManager()) {
+		//When power cycling, poll counter must be preserved to allow movies to playback properly
 		pollCounter = console->GetControlManager()->GetPollCounter();
 	}
 
 	InitConsole(console, originalConsoleMemory, forPowerCycle);
 
+	//Restore pollcounter (used by movies when a power cycle is in the movie)
 	_console->GetControlManager()->SetPollCounter(pollCounter);
 
 	_rewindManager->InitHistory();

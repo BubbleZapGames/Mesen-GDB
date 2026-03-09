@@ -31,6 +31,7 @@ class BaseVideoFilter;
 class ShortcutKeyHandler;
 class SystemActionManager;
 class AudioPlayerHud;
+class MovieManager;
 class IInputRecorder;
 class IInputProvider;
 
@@ -76,7 +77,8 @@ private:
 	const unique_ptr<SaveStateManager> _saveStateManager;
 	const unique_ptr<CheatManager> _cheatManager;
 	const unique_ptr<HistoryViewer> _historyViewer;
-	
+	const unique_ptr<MovieManager> _movieManager;
+
 	const shared_ptr<RewindManager> _rewindManager;
 
 	thread_local static thread::id _currentThreadId;
@@ -193,6 +195,7 @@ public:
 	BatteryManager* GetBatteryManager() { return _batteryManager.get(); }
 	CheatManager* GetCheatManager() { return _cheatManager.get(); }
 	HistoryViewer* GetHistoryViewer() { return _historyViewer.get(); }
+	MovieManager* GetMovieManager() { return _movieManager.get(); }
 	shared_ptr<SystemActionManager> GetSystemActionManager() { return _systemActionManager; }
 
 	BaseVideoFilter* GetVideoFilter(bool getDefaultFilter = false);
