@@ -171,7 +171,7 @@ bool MesenMovie::Play(VirtualFile &file)
 	stringstream saveStateData;
 	if(_reader->GetStream("SaveState.mss", saveStateData)) {
 		if(!_emu->GetSaveStateManager()->LoadState(saveStateData)) {
-			return false;
+			MessageManager::Log("[Movie] Save state load failed, starting from power-on state");
 		}
 	}
 
