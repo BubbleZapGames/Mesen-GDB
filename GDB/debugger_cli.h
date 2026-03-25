@@ -17,6 +17,14 @@ struct CliBreakpoint {
 	bool enabled;
 };
 
+enum class RegCondOp { Eq, Ne, Lt, Gt, Le, Ge };
+
+struct RegCondition {
+	std::string regName;
+	RegCondOp op;
+	uint16_t value;
+};
+
 class DebuggerCli {
 private:
 	Emulator* _emu;
@@ -53,8 +61,13 @@ private:
 	void CmdReset();
 	void CmdTrace(const std::string& filename);
 	void CmdDump(const std::string& type, const std::string& filename);
+	void CmdScreenshot(const std::string& filename);
+	void CmdRunUntil(const RegCondition& cond);
 	void CmdHelp();
 
+	uint16_t GetRegisterValue(const std::string& name, const uint8_t* stateBuffer);
+	bool ParseRegCondition(const std::string& expr, RegCondition& cond);
+	bool EvalRegCondition(const RegCondition& cond, const uint8_t* stateBuffer);
 	void SyncBreakpoints();
 	std::vector<std::string> Tokenize(const std::string& line);
 	uint32_t ParseAddress(const std::string& str);

@@ -4,6 +4,8 @@
 #include "formatter.h"
 #include "console_info.h"
 #include "Shared/Emulator.h"
+#include "Shared/EmuSettings.h"
+#include "Shared/Video/VideoDecoder.h"
 #include "Shared/DebuggerRequest.h"
 #include "Debugger/Debugger.h"
 #include "Debugger/MemoryDumper.h"
@@ -155,6 +157,9 @@ uint16_t BatchRunner::GetRegisterValue(const std::string& name, const uint8_t* s
 
 int BatchRunner::Run()
 {
+	// Enable max speed in batch mode (no frame limiter)
+	_emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
+
 	// Resume execution -- the debugger paused on initial step
 	{
 		DebuggerRequest req = _emu->GetDebugger(false);
@@ -219,6 +224,26 @@ int BatchRunner::Run()
 		out.write(reinterpret_cast<char*>(buf.data()), size);
 		if(!_jsonOutput) {
 			fprintf(stderr, "Dumped %u bytes to %s\n", size, d.filename.c_str());
+		}
+	}
+
+	// Screenshot if requested
+	if(!_screenshotFile.empty()) {
+		VideoDecoder* decoder = _emu->GetVideoDecoder();
+		if(decoder) {
+			std::stringstream ss;
+			decoder->TakeScreenshot(ss);
+			std::string data = ss.str();
+			if(!data.empty()) {
+				std::ofstream out(_screenshotFile, std::ios::binary);
+				if(out) {
+					out.write(data.data(), data.size());
+					if(!_jsonOutput) {
+						fprintf(stderr, "Screenshot saved to %s (%zu bytes)\n",
+						        _screenshotFile.c_str(), data.size());
+					}
+				}
+			}
 		}
 	}
 

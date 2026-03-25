@@ -39,9 +39,11 @@ void MesenMovie::Stop()
 			MessageManager::DisplayMessage("Movies", isEndOfMovie ? "MovieEnded" : "MovieStopped");
 		}
 
-		if(isEndOfMovie) {
-			_emu->PauseOnNextFrame();
-		}
+		// Don't pause on movie end in CLI mode — let the game continue
+		// (The original Mesen2 GUI pauses here for user review)
+		//if(isEndOfMovie) {
+		//	_emu->PauseOnNextFrame();
+		//}
 
 		_emu->GetCheatManager()->SetCheats(_originalCheats);
 

@@ -60,9 +60,12 @@ struct CliArgs {
 	std::vector<uint32_t> breakAddresses;
 	std::vector<BatchAssertion> assertions;
 	std::vector<MemoryDump> dumps;
+	std::string screenshotFile;
 	std::string moviePath;
 	bool logBus = false;
 	bool logVram = false;
+	bool logHdma = false;
+	bool turbo = false;
 };
 
 static uint32_t ParseAddr(const std::string& s)
@@ -101,9 +104,12 @@ static void PrintUsage(const char* prog)
 		"  --check-mem <A>=<V>     Assert memory byte (batch)\n"
 		"  --check-mem16 <A>=<V>   Assert memory word (batch)\n"
 		"  --dump <type> <file>    Dump memory region (batch)\n"
+		"  --screenshot <file>     Capture frame to PNG (batch)\n"
 		"  --movie <file.mmo>      Play a Mesen movie file (.mmo)\n"
+		"  --turbo                 Run at maximum speed (no frame limiter)\n"
 		"  --log-bus               Log SNES bus writes to stdout\n"
 		"  --log-vram              Log SNES VRAM writes to stdout\n"
+		"  --log-hdma              Log SNES HDMA transfers to stdout\n"
 		"  --help                  Show this help\n"
 		"\n"
 		"Address formats: $1234, 0x1234, 1234, 00:8000\n"
@@ -137,6 +143,8 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			args.logBus = true;
 		} else if(arg == "--log-vram") {
 			args.logVram = true;
+		} else if(arg == "--log-hdma") {
+			args.logHdma = true;
 		} else if(arg == "--break" && i + 1 < argc) {
 			args.breakAddresses.push_back(ParseAddr(argv[++i]));
 		} else if(arg == "--timeout" && i + 1 < argc) {
@@ -174,6 +182,10 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			// Store type name as string; resolve to MemoryType after console detection
 			// For now store -1 as a sentinel; the type name goes in filename temporarily
 			args.dumps.push_back({-1, type + "\t" + file});
+		} else if(arg == "--screenshot" && i + 1 < argc) {
+			args.screenshotFile = argv[++i];
+		} else if(arg == "--turbo") {
+			args.turbo = true;
 		} else if(arg[0] == '-') {
 			fprintf(stderr, "Unknown option: %s\n", arg.c_str());
 			PrintUsage(argv[0]);
@@ -293,6 +305,7 @@ static int RunCliMode(CliArgs& args)
 	// 7. Enable bus logging flags
 	BusLogging::logBus.store(args.logBus, std::memory_order_relaxed);
 	BusLogging::logVram.store(args.logVram, std::memory_order_relaxed);
+	BusLogging::logHdma.store(args.logHdma, std::memory_order_relaxed);
 
 	// 8. Detect console type and primary CPU
 	CpuType primaryCpu = emu->GetCpuTypes()[0];
@@ -327,7 +340,24 @@ static int RunCliMode(CliArgs& args)
 		}
 	}
 
-	// 9. Set initial breakpoints (now we're in a known-stopped state)
+	// 9. Start movie playback if requested (before breakpoints, since PowerCycle resets debugger)
+
+	if(!args.moviePath.empty()) {
+		VirtualFile movieFile(args.moviePath);
+		if(!movieFile.IsValid()) {
+			fprintf(stderr, "Movie file not found: %s\n", args.moviePath.c_str());
+		} else {
+			fprintf(stderr, "[Movie] Loading: %s\n", args.moviePath.c_str());
+			emu->GetMovieManager()->Play(movieFile, true);
+			if(emu->GetMovieManager()->Playing()) {
+				fprintf(stderr, "[Movie] Playback started\n");
+			} else {
+				fprintf(stderr, "[Movie] Failed to start playback\n");
+			}
+		}
+	}
+
+	// 10. Set initial breakpoints (after movie start, since movie PowerCycle resets debugger)
 	if(!args.breakAddresses.empty()) {
 		MemoryType cpuMemType = ConsoleInfo::GetCpuMemoryType(primaryCpu);
 
@@ -371,20 +401,9 @@ static int RunCliMode(CliArgs& args)
 		}
 	}
 
-	// 10. Start movie playback if requested
-	if(!args.moviePath.empty()) {
-		VirtualFile movieFile(args.moviePath);
-		if(!movieFile.IsValid()) {
-			fprintf(stderr, "Movie file not found: %s\n", args.moviePath.c_str());
-		} else {
-			fprintf(stderr, "[Movie] Loading: %s\n", args.moviePath.c_str());
-			emu->GetMovieManager()->Play(movieFile, true);
-			if(emu->GetMovieManager()->Playing()) {
-				fprintf(stderr, "[Movie] Playback started\n");
-			} else {
-				fprintf(stderr, "[Movie] Failed to start playback\n");
-			}
-		}
+	// Apply turbo mode if requested
+	if(args.turbo) {
+		emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
 	}
 
 	// 11. Dispatch to batch or interactive mode
@@ -399,6 +418,9 @@ static int RunCliMode(CliArgs& args)
 			if(d.memType >= 0) {
 				runner.AddDump(d.memType, d.filename);
 			}
+		}
+		if(!args.screenshotFile.empty()) {
+			runner.SetScreenshotFile(args.screenshotFile);
 		}
 		exitCode = runner.Run();
 	} else {

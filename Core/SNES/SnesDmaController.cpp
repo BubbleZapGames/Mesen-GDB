@@ -4,6 +4,7 @@
 #include "SNES/SnesMemoryManager.h"
 #include "Shared/MessageManager.h"
 #include "Utilities/Serializer.h"
+#include "GDB/bus_logging.h"
 
 static constexpr uint8_t _transferByteCount[8] = { 1, 2, 2, 4, 4, 4, 2, 4 };
 static constexpr uint8_t _transferOffset[8][4] = {
@@ -113,8 +114,15 @@ bool SnesDmaController::InitHdmaChannels()
 
 	if(!_state.HdmaChannels) {
 		//No channels are enabled, no more processing needs to be done
+		if(BusLogging::logHdma.load(std::memory_order_relaxed)) {
+			fprintf(stdout, "[HDMA] InitHdmaChannels: no channels enabled\n");
+		}
 		UpdateNeedToProcessFlag();
 		return false;
+	}
+
+	if(BusLogging::logHdma.load(std::memory_order_relaxed)) {
+		fprintf(stdout, "[HDMA] InitHdmaChannels mask=$%02X\n", _state.HdmaChannels);
 	}
 
 	bool needSync = !HasActiveDmaChannel();
@@ -126,7 +134,7 @@ bool SnesDmaController::InitHdmaChannels()
 
 	for(int i = 0; i < 8; i++) {
 		DmaChannelConfig &ch = _state.Channel[i];
-		
+
 		//Set DoTransfer to true for all channels if any HDMA channel is enabled
 		ch.DoTransfer = true;
 
@@ -139,6 +147,12 @@ bool SnesDmaController::InitHdmaChannels()
 			ch.HdmaLineCounterAndRepeat = _memoryManager->ReadDma((ch.SrcBank << 16) | ch.HdmaTableAddress, true);
 			_memoryManager->IncMasterClock4();
 			_dmaClockCounter += 8;
+
+			if(BusLogging::logHdma.load(std::memory_order_relaxed)) {
+				uint32_t readAddr = (ch.SrcBank << 16) | ch.SrcAddress;
+				fprintf(stdout, "[HDMA] Init ch%d: src=$%06X lineCounter=$%02X finished=%d\n",
+					i, readAddr, ch.HdmaLineCounterAndRepeat, ch.HdmaFinished);
+			}
 
 			ch.HdmaTableAddress++;
 			if(ch.HdmaLineCounterAndRepeat == 0) {
@@ -177,24 +191,32 @@ void SnesDmaController::RunHdmaTransfer(DmaChannelConfig &channel)
 	uint8_t transferByteCount = _transferByteCount[channel.TransferMode];
 	channel.DmaActive = false;
 
+	bool doLog = BusLogging::logHdma.load(std::memory_order_relaxed);
+
 	uint8_t i = 0;
 	if(channel.HdmaIndirectAddressing) {
 		do {
-			CopyDmaByte(
-				(channel.HdmaBank << 16) | channel.TransferSize,
-				0x2100 | (channel.DestAddress + transferOffsets[i]),
-				channel.InvertDirection
-			);
+			uint32_t src = (channel.HdmaBank << 16) | channel.TransferSize;
+			uint16_t dst = 0x2100 | (channel.DestAddress + transferOffsets[i]);
+			if(doLog) {
+				uint8_t val = _memoryManager->Peek(src);
+				fprintf(stdout, "[HDMA] ch%d src=$%06X dst=$%04X val=$%02X (indirect)\n",
+					(int)(&channel - &_state.Channel[0]), src, dst, val);
+			}
+			CopyDmaByte(src, dst, channel.InvertDirection);
 			channel.TransferSize++;
 			i++;
 		} while(i < transferByteCount);
 	} else {
 		do {
-			CopyDmaByte(
-				(channel.SrcBank << 16) | channel.HdmaTableAddress,
-				0x2100 | (channel.DestAddress + transferOffsets[i]),
-				channel.InvertDirection
-			);
+			uint32_t src = (channel.SrcBank << 16) | channel.HdmaTableAddress;
+			uint16_t dst = 0x2100 | (channel.DestAddress + transferOffsets[i]);
+			if(doLog) {
+				uint8_t val = _memoryManager->Peek(src);
+				fprintf(stdout, "[HDMA] ch%d src=$%06X dst=$%04X val=$%02X\n",
+					(int)(&channel - &_state.Channel[0]), src, dst, val);
+			}
+			CopyDmaByte(src, dst, channel.InvertDirection);
 			channel.HdmaTableAddress++;
 			i++;
 		} while(i < transferByteCount);
@@ -234,6 +256,13 @@ bool SnesDmaController::ProcessHdmaChannels()
 	if(!_state.HdmaChannels) {
 		UpdateNeedToProcessFlag();
 		return false;
+	}
+
+	static int hdmaLogCount = 0;
+	bool doLog = BusLogging::logHdma.load(std::memory_order_relaxed);
+	if(doLog && hdmaLogCount < 500) {
+		fprintf(stdout, "[HDMA] ProcessHdmaChannels mask=$%02X\n", _state.HdmaChannels);
+		hdmaLogCount++;
 	}
 
 	bool needSync = !HasActiveDmaChannel();
@@ -426,6 +455,9 @@ void SnesDmaController::Write(uint16_t addr, uint8_t value)
 
 		case 0x420C:
 			//HDMAEN - HDMA Enable
+			if(BusLogging::logHdma.load(std::memory_order_relaxed)) {
+				fprintf(stdout, "[HDMA] HDMAEN=$%02X (was $%02X)\n", value, _state.HdmaChannels);
+			}
 			_state.HdmaChannels = value;
 			break;
 

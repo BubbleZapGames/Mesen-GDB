@@ -33,6 +33,7 @@ private:
 	int _timeoutMs;
 	std::vector<BatchAssertion> _assertions;
 	std::vector<MemoryDump> _dumps;
+	std::string _screenshotFile;
 
 	uint16_t GetRegisterValue(const std::string& name, const uint8_t* stateBuffer, bool& found);
 
@@ -43,5 +44,6 @@ public:
 
 	void AddAssertion(const BatchAssertion& assertion);
 	void AddDump(int memType, const std::string& filename);
+	void SetScreenshotFile(const std::string& filename) { _screenshotFile = filename; }
 	int Run();  // returns exit code: 0 = pass, 1 = fail, 2 = error/timeout
 };

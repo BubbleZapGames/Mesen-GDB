@@ -158,10 +158,14 @@ int32_t BaseCartridge::GetHeaderScore(uint32_t addr)
 
 	uint32_t resetVectorAddr = addr + 0x7FFC;
 	uint32_t resetVector = _prgRom[resetVectorAddr] | (_prgRom[resetVectorAddr + 1] << 8);
-	if(resetVector < 0x8000) {
+	if(resetVector == 0x0000 || resetVector == 0xFFFF) {
 		return -1;
 	}
-	
+	// For LoROM (addr < 0x8000), ROM is mapped at $8000-$FFFF only
+	if(addr < 0x8000 && resetVector < 0x8000) {
+		return -1;
+	}
+
 	uint8_t op = _prgRom[addr + (resetVector & 0x7FFF)];
 	if(op == 0x18 || op == 0x78 || op == 0x4C || op == 0x5C || op == 0x20 || op == 0x22 || op == 0x9C) {
 		//CLI, SEI, JMP, JML, JSR, JSl, STZ

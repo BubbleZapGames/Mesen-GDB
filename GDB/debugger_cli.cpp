@@ -4,6 +4,7 @@
 #include "formatter.h"
 #include "console_info.h"
 #include "Shared/Emulator.h"
+#include "Shared/EmuSettings.h"
 #include "Shared/DebuggerRequest.h"
 #include "Debugger/Debugger.h"
 #include "Debugger/Breakpoint.h"
@@ -13,12 +14,15 @@
 #include "Debugger/TraceLogFileSaver.h"
 #include "Debugger/DebugUtilities.h"
 #include "Shared/MemoryType.h"
+#include "Shared/Video/VideoDecoder.h"
+#include "Utilities/PNGHelper.h"
 #include <iostream>
 #include <sstream>
 #include <fstream>
 #include <cstring>
 #include <algorithm>
 #include <poll.h>
+#include "SNES/SnesCpuTypes.h"
 #include <unistd.h>
 
 // We need to populate Breakpoint's private fields directly.
@@ -162,7 +166,9 @@ void DebuggerCli::CmdStep(int count)
 		Debugger* dbg = req.GetDebugger();
 		if(dbg) dbg->Step(_primaryCpu, count, StepType::Step);
 	}
-	_listener->WaitForBreak(5000);
+	// Scale timeout with step count: ~1ms per 100 steps + 10s base
+	int timeoutMs = 10000 + count / 100;
+	_listener->WaitForBreak(timeoutMs);
 	PrintState();
 }
 
@@ -380,6 +386,38 @@ void DebuggerCli::CmdDump(const std::string& type, const std::string& filename)
 	printf("Dumped %u bytes of %s to %s\n", size, label, filename.c_str());
 }
 
+void DebuggerCli::CmdScreenshot(const std::string& filename)
+{
+	VideoDecoder* decoder = _emu->GetVideoDecoder();
+	if(!decoder) {
+		std::cout << "VideoDecoder not available.\n";
+		return;
+	}
+
+	if(filename.empty()) {
+		// Use default filename
+		decoder->TakeScreenshot();
+		std::cout << "Screenshot saved.\n";
+	} else {
+		// Save to specified file via stringstream
+		std::stringstream ss;
+		decoder->TakeScreenshot(ss);
+		std::string data = ss.str();
+		if(data.empty()) {
+			std::cout << "No frame data available (emulation may not have rendered a frame yet).\n";
+			return;
+		}
+		std::ofstream out(filename, std::ios::binary);
+		if(!out) {
+			std::cout << "Failed to open " << filename << " for writing.\n";
+			return;
+		}
+		out.write(data.data(), data.size());
+		out.close();
+		std::cout << "Screenshot saved to " << filename << " (" << data.size() << " bytes)\n";
+	}
+}
+
 void DebuggerCli::CmdSet(uint32_t addr, uint8_t val)
 {
 	MemoryType cpuMemType = ConsoleInfo::GetCpuMemoryType(_primaryCpu);
@@ -433,7 +471,8 @@ void DebuggerCli::CmdFrames(int count)
 		Debugger* dbg = req.GetDebugger();
 		if(dbg) dbg->Step(_primaryCpu, count, StepType::PpuFrame);
 	}
-	_listener->WaitForBreak(count * 1000 + 5000);
+	// Each frame ~16.7ms at 60fps, allow generous overhead for debugger
+	_listener->WaitForBreak(count * 100 + 10000);
 	PrintState();
 }
 
@@ -458,6 +497,159 @@ void DebuggerCli::CmdTrace(const std::string& filename)
 		dbg->GetTraceLogFileSaver()->StartLogging(filename);
 		std::cout << "Tracing to: " << filename << "\n";
 	}
+}
+
+uint16_t DebuggerCli::GetRegisterValue(const std::string& name, const uint8_t* stateBuffer)
+{
+	auto iequals = [](const std::string& a, const std::string& b) {
+		if(a.size() != b.size()) return false;
+		for(size_t i = 0; i < a.size(); i++) {
+			if(toupper(a[i]) != toupper(b[i])) return false;
+		}
+		return true;
+	};
+
+	switch(_primaryCpu) {
+		case CpuType::Snes:
+		case CpuType::Sa1: {
+			const SnesCpuState& s = *reinterpret_cast<const SnesCpuState*>(stateBuffer);
+			if(iequals(name, "A")) return s.A;
+			if(iequals(name, "X")) return s.X;
+			if(iequals(name, "Y")) return s.Y;
+			if(iequals(name, "SP") || iequals(name, "S")) return s.SP;
+			if(iequals(name, "D")) return s.D;
+			if(iequals(name, "DBR")) return s.DBR;
+			if(iequals(name, "PS")) return s.PS;
+			if(iequals(name, "PC")) return s.PC;
+			if(iequals(name, "K")) return s.K;
+			break;
+		}
+		// Other CPU types could be added here (NES, GB, etc.)
+		default: break;
+	}
+	return 0;
+}
+
+bool DebuggerCli::ParseRegCondition(const std::string& expr, RegCondition& cond)
+{
+	// Parse expressions like: SP>0x1FF, A=0x42, D!=0, S<0x100
+	// Operators: =, ==, !=, <, >, <=, >=
+	size_t opPos = std::string::npos;
+	size_t opLen = 0;
+	RegCondOp op;
+
+	// Try two-char operators first
+	for(size_t i = 1; i < expr.size() - 1; i++) {
+		if(expr[i] == '=' && expr[i+1] == '=') { opPos = i; opLen = 2; op = RegCondOp::Eq; break; }
+		if(expr[i] == '!' && expr[i+1] == '=') { opPos = i; opLen = 2; op = RegCondOp::Ne; break; }
+		if(expr[i] == '<' && expr[i+1] == '=') { opPos = i; opLen = 2; op = RegCondOp::Le; break; }
+		if(expr[i] == '>' && expr[i+1] == '=') { opPos = i; opLen = 2; op = RegCondOp::Ge; break; }
+	}
+
+	// Try single-char operators
+	if(opPos == std::string::npos) {
+		for(size_t i = 1; i < expr.size(); i++) {
+			if(expr[i] == '=') { opPos = i; opLen = 1; op = RegCondOp::Eq; break; }
+			if(expr[i] == '<') { opPos = i; opLen = 1; op = RegCondOp::Lt; break; }
+			if(expr[i] == '>') { opPos = i; opLen = 1; op = RegCondOp::Gt; break; }
+		}
+	}
+
+	if(opPos == std::string::npos) return false;
+
+	cond.regName = expr.substr(0, opPos);
+	cond.op = op;
+
+	std::string valStr = expr.substr(opPos + opLen);
+	// Strip $ or 0x prefix
+	if(valStr.size() > 1 && valStr[0] == '$') valStr = valStr.substr(1);
+	else if(valStr.size() > 2 && valStr[0] == '0' && (valStr[1] == 'x' || valStr[1] == 'X')) valStr = valStr.substr(2);
+
+	cond.value = (uint16_t)std::stoul(valStr, nullptr, 16);
+	return true;
+}
+
+bool DebuggerCli::EvalRegCondition(const RegCondition& cond, const uint8_t* stateBuffer)
+{
+	uint16_t val = GetRegisterValue(cond.regName, stateBuffer);
+	switch(cond.op) {
+		case RegCondOp::Eq: return val == cond.value;
+		case RegCondOp::Ne: return val != cond.value;
+		case RegCondOp::Lt: return val < cond.value;
+		case RegCondOp::Gt: return val > cond.value;
+		case RegCondOp::Le: return val <= cond.value;
+		case RegCondOp::Ge: return val >= cond.value;
+	}
+	return false;
+}
+
+void DebuggerCli::CmdRunUntil(const RegCondition& cond)
+{
+	static const char* opStr[] = { "==", "!=", "<", ">", "<=", ">=" };
+	printf("Searching for %s%s$%04X... (Ctrl+C to interrupt)\n",
+		cond.regName.c_str(), opStr[(int)cond.op], cond.value);
+
+	uint8_t stateBuffer[512] = {};
+	BaseState& state = *reinterpret_cast<BaseState*>(stateBuffer);
+	uint64_t totalSteps = 0;
+
+	// Step in small batches, checking after each
+	int batchSize = 1;
+	while(!_listener->IsInterrupted() && !_listener->IsQuitRequested()) {
+		_listener->Reset();
+		{
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(!dbg) return;
+			dbg->Step(_primaryCpu, batchSize, StepType::Step);
+		}
+		int timeoutMs = 10000 + batchSize / 100;
+		bool hit = _listener->WaitForBreak(timeoutMs);
+		if(!hit || _listener->IsInterrupted()) {
+			// Interrupted — pause emulation and report
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(dbg) dbg->Step(_primaryCpu, 1, StepType::Step);
+			_listener->WaitForBreak(1000);
+			printf("\nInterrupted after %llu steps.\n", (unsigned long long)totalSteps);
+			PrintState();
+			return;
+		}
+		totalSteps += batchSize;
+
+		// Check condition
+		{
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(!dbg) return;
+			dbg->GetCpuState(state, _primaryCpu);
+		}
+		if(EvalRegCondition(cond, stateBuffer)) {
+			// Found! But we overshot by up to batchSize steps.
+			// Binary search to find the exact instruction.
+			if(batchSize > 1) {
+				printf("Condition hit after ~%llu steps. Narrowing...\n",
+					(unsigned long long)totalSteps);
+
+				// Rewind: we need to re-run from a known-good state.
+				// Since we can't rewind, we'll just report what we found.
+				// The user can set a breakpoint and step from there.
+			}
+			printf("Condition met: %s=%04X\n",
+				cond.regName.c_str(), GetRegisterValue(cond.regName, stateBuffer));
+			PrintState();
+			return;
+		}
+
+		// Keep batch size at 1 for precise detection
+
+		// Progress report every 10K steps
+		if(totalSteps % 10000 < (uint64_t)batchSize) {
+			printf("  ...%llu steps\r", (unsigned long long)totalSteps);
+			fflush(stdout);
+		}
+	}
+	printf("\nAborted.\n");
 }
 
 void DebuggerCli::CmdHelp()
@@ -496,12 +688,16 @@ void DebuggerCli::CmdHelp()
 		std::cout << regions[i].shortName;
 	}
 	std::cout << ")\n"
+		"  screenshot [file] Capture frame to PNG\n"
+		"  ss [file]         Alias for screenshot\n"
 		"  set <addr> <val>  Set CPU memory byte\n"
 		"  disasm [addr] [n] Disassemble (default: at PC, 10 lines)\n"
 		"  d [addr] [n]      Alias for disasm\n"
 		"  bt                Show callstack\n"
 		"  frames <N>        Run N PPU frames\n"
 		"  reset             Reset emulator\n"
+		"  rwatch <cond>     Run until register condition is true\n"
+		"                    Examples: SP>$1FF, D!=0, A=$42, S<$100\n"
 		"  trace <file|off>  Start/stop trace logging\n"
 		"  help              Show this help\n"
 		"  quit              Exit debugger\n"
@@ -601,6 +797,9 @@ void DebuggerCli::Run()
 					continue;
 				}
 				CmdDump(tokens[1], tokens[2]);
+			} else if(cmd == "screenshot" || cmd == "ss") {
+				std::string fname = (tokens.size() > 1) ? tokens[1] : "";
+				CmdScreenshot(fname);
 			} else if(cmd == "set") {
 				if(tokens.size() < 3) { std::cout << "Usage: set <addr> <val>\n"; continue; }
 				uint32_t addr = ParseAddress(tokens[1]);
@@ -625,6 +824,14 @@ void DebuggerCli::Run()
 				CmdFrames(std::stoi(tokens[1]));
 			} else if(cmd == "reset") {
 				CmdReset();
+			} else if(cmd == "rwatch" || cmd == "rw") {
+				if(tokens.size() < 2) { std::cout << "Usage: rwatch <cond>  (e.g. SP>$1FF, D!=0)\n"; continue; }
+				RegCondition cond;
+				if(!ParseRegCondition(tokens[1], cond)) {
+					std::cout << "Invalid condition. Use: REG<op>VALUE (e.g. SP>$1FF, A=$42)\n";
+					continue;
+				}
+				CmdRunUntil(cond);
 			} else if(cmd == "trace") {
 				if(tokens.size() < 2) { std::cout << "Usage: trace <file|off>\n"; continue; }
 				CmdTrace(tokens[1]);

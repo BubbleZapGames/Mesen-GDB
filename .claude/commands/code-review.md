@@ -38,7 +38,7 @@ Based on the files and subsystems touched in the diff, selectively read docs tha
 - Changes to `typeck/` → read `docs/type-system.md`
 - Changes to `frontend/` or parser → read `docs/macros.md`, `docs/control-flow.md`
 - Changes to `hir/` → read `docs/mode-transition-analysis.md`
-- Changes to calling convention or function handling → read `docs/calling-convention.md`, `docs/abi-models.md`
+- Changes to calling convention or function handling → read `docs/abi-models.md`
 - Changes to pointer/memory code → read `docs/pointers-memory.md`
 - Changes to interrupt handling → read `docs/interrupt-mode-transition.md`
 - Changes to struct/array codegen → read `docs/struct-array-indexing.md`
