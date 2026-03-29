@@ -1,78 +1,66 @@
 #include "DapMessageReader.h"
 #include <string>
-#include <algorithm>
-#include <cctype>
 #include <cstdio>
-#include <vector>
 
 DapMessageReader::DapMessageReader(FILE* input) : _input(input) {}
 
-std::optional<JsonValue> DapMessageReader::ReadMessage() {
-	char headerLine[256];
-	size_t bytesRead = 0;
-	
-	// Read until we get an empty line (the Content-Length header)
-	while(bytesRead < sizeof(headerLine) - 1) {
-		int c = fgetc(_input);
-		if(c == EOF) {
-			return std::nullopt;
-		}
-		
-		if(c == '\n') {
-			// Check if this is an empty line (just \n after \r\n)
-			if(bytesRead == 0 || (bytesRead == 1 && headerLine[0] == '\r')) {
-				break;
+std::optional<JsonValue> DapMessageReader::ReadMessage()
+{
+	int contentLength = -1;
+
+	// Read headers line-by-line until we hit an empty line (\r\n\r\n)
+	while(true) {
+		std::string line;
+		while(true) {
+			int c = fgetc(_input);
+			if(c == EOF) {
+				return std::nullopt;
 			}
-			headerLine[bytesRead++] = c;
-		} else if(c == '\r') {
-			// Skip \r, wait for \n
-			continue;
-		} else {
-			headerLine[bytesRead++] = c;
+			if(c == '\n') break;
+			if(c != '\r') line += (char)c;
+		}
+
+		// Empty line = end of headers
+		if(line.empty()) {
+			break;
+		}
+
+		// Parse "Content-Length: N" header
+		auto colonPos = line.find(':');
+		if(colonPos != std::string::npos) {
+			std::string key = line.substr(0, colonPos);
+			std::string value = line.substr(colonPos + 1);
+
+			// Trim leading whitespace from value
+			size_t start = value.find_first_not_of(" \t");
+			if(start != std::string::npos) {
+				value = value.substr(start);
+			}
+
+			if(key == "Content-Length") {
+				try {
+					contentLength = std::stoi(value);
+				} catch(...) {
+					return std::nullopt;
+				}
+			}
 		}
 	}
-	headerLine[bytesRead] = '\0';
-	
-	// Parse Content-Length header
-	if(bytesRead == 0) {
+
+	if(contentLength <= 0) {
 		return std::nullopt;
 	}
-	
-	std::string headerStr = headerLine;
-	auto colonPos = headerStr.find(':');
-	if(colonPos == std::string::npos) {
-		return std::nullopt;
-	}
-	
-	std::string lengthStr = headerStr.substr(colonPos + 1);
-	lengthStr.erase(0, lengthStr.find_first_not_of(" \t"));
-	lengthStr.erase(lengthStr.find_last_not_of(" \t\r\n") + 1);
-	
-	if(lengthStr.empty()) {
-		return std::nullopt;
-	}
-	
-	int contentLength = 0;
-	try {
-		contentLength = std::stoi(lengthStr);
-	} catch(...) {
-		return std::nullopt;
-	}
-	
-	// Read content
-	std::string content;
-	content.resize(contentLength);
-	
+
+	// Read exactly contentLength bytes of JSON body
+	std::string content(contentLength, '\0');
 	size_t totalRead = 0;
 	while(totalRead < (size_t)contentLength) {
-		size_t toRead = contentLength - totalRead;
-		size_t read = fread(&content[totalRead], 1, toRead, _input);
+		size_t read = fread(&content[totalRead], 1, contentLength - totalRead, _input);
 		if(read == 0) {
 			return std::nullopt;
 		}
 		totalRead += read;
 	}
-	
-	// Parse JSON
+
 	return ParseJson(content);
 }

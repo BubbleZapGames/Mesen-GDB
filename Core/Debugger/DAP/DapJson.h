@@ -73,7 +73,11 @@ public:
 
 	// For comparison
 	bool operator==(const JsonValue& other) const;
+
+private:
+	void Destroy();
+	void CopyFrom(const JsonValue& other);
+	void MoveFrom(JsonValue&& other);
 };
 
-std::optional<JsonValue> ParseJson(const std::string& input);
 std::optional<JsonValue> ParseJson(const std::string& input);

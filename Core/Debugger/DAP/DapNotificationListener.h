@@ -10,6 +10,8 @@ private:
 	
 public:
 	DapNotificationListener(DapServer* server);
-	
+	virtual ~DapNotificationListener() = default;
+
 	void ProcessNotification(ConsoleNotificationType type, void* parameter) override;
+	void Detach() { _server = nullptr; }
 };

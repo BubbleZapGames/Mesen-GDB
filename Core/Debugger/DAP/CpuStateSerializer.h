@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "DapJson.h"
 
-class BaseState;
+struct BaseState;
 enum class CpuType : uint8_t;
 
 class CpuStateSerializer {

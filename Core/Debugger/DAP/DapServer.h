@@ -1,45 +1,80 @@
 #pragma once
 #include <string>
 #include <cstdint>
+#include <atomic>
 #include <memory>
+#include <vector>
 #include "DapTypes.h"
 #include "DapJson.h"
+#include "DapMessageReader.h"
+#include "DapMessageWriter.h"
+#include "SourceMapper.h"
 
-class INotificationListener;
 class Debugger;
 class Emulator;
+class Breakpoint;
+class DapNotificationListener;
 enum class CpuType : uint8_t;
 
 class DapServer {
 private:
-	Debugger* _debugger;
-	Emulator* _emulator;
-	INotificationListener* _notificationListener;
-	bool _isRunning;
-	
+	Emulator* _emu;
+	DapMessageReader _reader;
+	DapMessageWriter _writer;
+	std::shared_ptr<DapNotificationListener> _listener;
+	std::atomic<int> _seq{1};
+	bool _running = false;
+	bool _configDone = false;
+	bool _stopOnEntry = true;
+	uint32_t _nextBreakpointId = 1;
+	std::vector<Breakpoint> _breakpoints;
+	SourceMapper _sourceMapper;
+
+	// Response/event helpers
+	JsonValue MakeResponse(const JsonValue& request, bool success);
+	JsonValue MakeEvent(const char* event);
+	void SendResponse(JsonValue&& response);
+	void SendEvent(JsonValue&& event);
+
+	// Thread/CPU mapping
+	static int CpuTypeToThreadId(CpuType cpu);
+	static CpuType ThreadIdToCpuType(int threadId);
+	static const char* CpuTypeName(CpuType cpu);
+
+	// Breakpoint helpers
+	void SyncBreakpoints();
+
+	// Request handlers — Phase 1
+	void HandleInitialize(const JsonValue& request);
+	void HandleLaunch(const JsonValue& request);
+	void HandleConfigurationDone(const JsonValue& request);
+	void HandleThreads(const JsonValue& request);
+	void HandleStackTrace(const JsonValue& request);
+	void HandleScopes(const JsonValue& request);
+	void HandleVariables(const JsonValue& request);
+	void HandleContinue(const JsonValue& request);
+	void HandlePause(const JsonValue& request);
+	void HandleDisconnect(const JsonValue& request);
+
+	// Request handlers — Phase 2
+	void HandleStepIn(const JsonValue& request);
+	void HandleNext(const JsonValue& request);
+	void HandleStepOut(const JsonValue& request);
+	void HandleSetBreakpoints(const JsonValue& request);
+	void HandleDisassemble(const JsonValue& request);
+
+	// Request handlers — Phase 4
+	void HandleEvaluate(const JsonValue& request);
+	void HandleReadMemory(const JsonValue& request);
+	void HandleWriteMemory(const JsonValue& request);
+
 public:
-	DapServer(Debugger* debugger, Emulator* emulator, INotificationListener* notificationListener);
+	DapServer(Emulator* emu, FILE* dapOutput = stdout);
 	~DapServer();
-	
+
 	void Run();
-	void Stop();
-	
-private:
-	void HandleInitializationRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleLaunchRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleConfigurationDoneRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleThreadsRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleStackTraceRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleScopesRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleVariablesRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleContinueRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandlePauseRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleDisconnectRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleStepInRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleNextRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleStepOutRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleSetBreakpointsRequest(const JsonValue& request, DapMessageWriter& writer);
-	void HandleDisassembleRequest(const JsonValue& request, DapMessageWriter& writer);
-	
-	void SendInitializedEvent(DapMessageWriter& writer);
+	void SendStoppedEvent(const char* reason, CpuType cpu);
+	void SendTerminatedEvent();
+
+	bool IsConfigDone() const { return _configDone; }
 };

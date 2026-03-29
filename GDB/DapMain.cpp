@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <csignal>
+#include <unistd.h>
 #include <atomic>
 #include <string>
 #include <thread>
@@ -222,37 +223,36 @@ static int RunDapMode(CliArgs& args)
 	emu->Initialize(false);
 	KeyManager::SetSettings(emu->GetSettings());
 
-	// Enable ALL debugger flags
+	// Enable ALL debugger flags before ROM load — only the ones for the loaded
+	// console will actually matter. This avoids needing to know console type upfront.
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::SnesDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::SpcDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::Sa1DebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GsuDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::NecDspDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::Cx4DebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GbDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::NesDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::PceDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::SmsDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GbaDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::WsDebuggerEnabled, true);
 	emu->GetSettings()->SetFlag(EmulationFlags::ConsoleMode);
 	emu->Pause();
 
-	// Register notification listener
-	auto listener = std::make_shared<CliNotificationListener>();
-	emu->GetNotificationManager()->RegisterNotificationListener(listener);
+	// Redirect stdout → stderr so Mesen's cout/printf doesn't corrupt
+	// the DAP stream. Give the real stdout fd to DapServer.
+	fflush(stdout);
+	int savedFd = dup(fileno(stdout));
+	dup2(fileno(stderr), fileno(stdout));
+	FILE* dapOutput = fdopen(savedFd, "w");
 
-	// Load ROM if provided
-	if(!args.romPath.empty()) {
-		if(!emu->LoadRom((VirtualFile)args.romPath, VirtualFile())) {
-			fprintf(stderr, "Failed to load ROM: %s\n", args.romPath.c_str());
-			return 2;
-		}
-		listener->WaitForBreak(5000);
-	}
-
-	// Create DAP server
-	DebuggerRequest dbgReq = emu->GetDebugger(false);
-	Debugger* debugger = dbgReq.GetDebugger();
-
-	DapServer server(debugger, emu.get(), listener.get());
+	// DapServer creates and registers its own DapNotificationListener.
+	// ROM loading is handled by the DAP launch request.
+	DapServer server(emu.get(), dapOutput);
 	server.Run();
+
+	fclose(dapOutput);
 
 	// Cleanup
 	emu->Stop(true);
@@ -512,6 +512,9 @@ int main(int argc, char* argv[])
 	// 2. Everything else → CLI mode (default, requires ROM)
 
 	if(args.dapMode) {
+		// In DAP mode, stdout is reserved for DAP JSON protocol.
+		// Disable Mesen's diagnostic output to stdout.
+		MessageManager::SetOptions(false, false);
 		return RunDapMode(args);
 	}
 

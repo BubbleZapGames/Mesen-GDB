@@ -12,6 +12,16 @@ namespace DapCommand {
 	constexpr const char* Continue = "continue";
 	constexpr const char* Pause = "pause";
 	constexpr const char* Disconnect = "disconnect";
+	// Phase 2
+	constexpr const char* StepIn = "stepIn";
+	constexpr const char* Next = "next";
+	constexpr const char* StepOut = "stepOut";
+	constexpr const char* SetBreakpoints = "setBreakpoints";
+	constexpr const char* Disassemble = "disassemble";
+	// Phase 4
+	constexpr const char* Evaluate = "evaluate";
+	constexpr const char* ReadMemory = "readMemory";
+	constexpr const char* WriteMemory = "writeMemory";
 }
 
 namespace DapEvent {
