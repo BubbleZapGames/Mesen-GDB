@@ -31,6 +31,9 @@
 #include "console_info.h"
 #include "bus_logging.h"
 
+#include "Core/Debugger/DAP/DapServer.h"
+#include "Core/Debugger/DAP/DapNotificationListener.h"
+
 #ifndef __APPLE__
 #include "Linux/LinuxKeyManager.h"
 #endif
@@ -203,15 +206,58 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 	return true;
 }
 
-// --- DAP mode stub ---
+// --- DAP mode ---
 static int RunDapMode(CliArgs& args)
 {
-	// TODO: DAP server implementation (Phase 1 of plan-phase1.md)
-	// For now, print a placeholder message to stderr
-	fprintf(stderr, "[DAP] DAP mode not yet implemented. Waiting for Phase 1.\n");
+	// Set home folder
+	{
+		const char* home = getenv("MESEN_HOME");
+		if(!home) home = getenv("HOME");
+		std::string mesenHome = std::string(home ? home : "/tmp") + "/.mesen-dap";
+		FolderUtilities::SetHomeFolder(mesenHome);
+	}
 
-	// If a ROM was given, set it up for when DAP launch request comes
-	// For now just exit
+	// Create and initialize emulator
+	std::unique_ptr<Emulator> emu(new Emulator());
+	emu->Initialize(false);
+	KeyManager::SetSettings(emu->GetSettings());
+
+	// Enable ALL debugger flags
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::SnesDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::SpcDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::Sa1DebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GbDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::NesDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::PceDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::SmsDebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GbaDebuggerEnabled, true);
+	emu->GetSettings()->SetFlag(EmulationFlags::ConsoleMode);
+	emu->Pause();
+
+	// Register notification listener
+	auto listener = std::make_shared<CliNotificationListener>();
+	emu->GetNotificationManager()->RegisterNotificationListener(listener);
+
+	// Load ROM if provided
+	if(!args.romPath.empty()) {
+		if(!emu->LoadRom((VirtualFile)args.romPath, VirtualFile())) {
+			fprintf(stderr, "Failed to load ROM: %s\n", args.romPath.c_str());
+			return 2;
+		}
+		listener->WaitForBreak(5000);
+	}
+
+	// Create DAP server
+	DebuggerRequest dbgReq = emu->GetDebugger(false);
+	Debugger* debugger = dbgReq.GetDebugger();
+
+	DapServer server(debugger, emu.get(), listener.get());
+	server.Run();
+
+	// Cleanup
+	emu->Stop(true);
+	emu->Release();
+
 	return 0;
 }
 
