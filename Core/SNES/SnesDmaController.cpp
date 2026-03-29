@@ -121,8 +121,10 @@ bool SnesDmaController::InitHdmaChannels()
 		return false;
 	}
 
+	static int hdmaFrameCount = 0;
+	hdmaFrameCount++;
 	if(BusLogging::logHdma.load(std::memory_order_relaxed)) {
-		fprintf(stdout, "[HDMA] InitHdmaChannels mask=$%02X\n", _state.HdmaChannels);
+		fprintf(stdout, "[HDMA] InitHdmaChannels frame=%d mask=$%02X\n", hdmaFrameCount, _state.HdmaChannels);
 	}
 
 	bool needSync = !HasActiveDmaChannel();
@@ -258,12 +260,7 @@ bool SnesDmaController::ProcessHdmaChannels()
 		return false;
 	}
 
-	static int hdmaLogCount = 0;
 	bool doLog = BusLogging::logHdma.load(std::memory_order_relaxed);
-	if(doLog && hdmaLogCount < 500) {
-		fprintf(stdout, "[HDMA] ProcessHdmaChannels mask=$%02X\n", _state.HdmaChannels);
-		hdmaLogCount++;
-	}
 
 	bool needSync = !HasActiveDmaChannel();
 	if(needSync) {
