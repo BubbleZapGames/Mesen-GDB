@@ -160,7 +160,7 @@ endif
 
 FSLIB := -lstdc++fs
 
-GDBSRC := $(filter-out GDB/DapMain.cpp, $(shell find GDB -name '*.cpp'))
+GDBSRC := $(filter-out GDB/DapMain.cpp, $(filter-out GDB/test_%.cpp, $(shell find GDB -name '*.cpp')))
 GDBOBJ := $(GDBSRC:.cpp=.o)
 
 GDBMAINSRC := GDB/DapMain.cpp
@@ -190,6 +190,17 @@ $(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) 
 	mkdir -p $(OUTFOLDER)
 	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
 
+# Unit tests — only links DAP .cpp files (no emulator core needed)
+TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp
+TESTOBJ := $(TESTSRC:.cpp=.o)
+DAPTESTOBJ := Core/Debugger/DAP/DapJson.o Core/Debugger/DAP/DapMessageReader.o \
+              Core/Debugger/DAP/DapMessageWriter.o Core/Debugger/DAP/DbgFileParser.o \
+              Core/Debugger/DAP/SourceMapper.o Utilities/SimpleLock.o Utilities/Timer.o
+
+test: $(TESTOBJ) $(DAPTESTOBJ)
+	$(CXX) $(CXXFLAGS) -o bin/dap-test $(TESTOBJ) $(DAPTESTOBJ) -pthread $(FSLIB)
+	bin/dap-test
+
 clean:
 	rm -r -f $(COREOBJ)
 	rm -r -f $(UTILOBJ)
@@ -197,4 +208,5 @@ clean:
 	rm -r -f $(SDLOBJ)
 	rm -r -f $(MACOSOBJ)
 	rm -r -f $(GDBOBJ) $(GDBMAINOBJ)
-	rm -r -f $(OUTFOLDER)/$(GDBBIN)
+	rm -r -f $(TESTOBJ)
+	rm -r -f $(OUTFOLDER)/$(GDBBIN) bin/dap-test
