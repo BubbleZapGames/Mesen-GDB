@@ -63,7 +63,7 @@ TEST(dbg_parse_lines)
 	DbgFileParser::Parse(GetDbgPath(), data);
 	ASSERT_TRUE(data.lines.size() >= 2800);
 	ASSERT_EQ(data.lines[0].fileId, 0);
-	ASSERT_EQ(data.lines[0].line, 1836);
+	ASSERT_EQ(data.lines[0].line, 1842);
 	ASSERT_TRUE(data.lines[0].spanIds.size() >= 1);
 	ASSERT_EQ(data.lines[0].spanIds[0], 0);
 }
@@ -86,8 +86,8 @@ TEST(dbg_parse_symbols)
 	ASSERT_EQ((int)data.symbols[0].val, 0x8064);
 	ASSERT_STR_EQ(data.symbols[1].name, "wait_nmi");
 	ASSERT_EQ((int)data.symbols[1].val, 0x8065);
-	ASSERT_STR_EQ(data.symbols[134].name, "main");
-	ASSERT_EQ((int)data.symbols[134].val, 0xE64A);
+	ASSERT_STR_EQ(data.symbols[137].name, "main");
+	ASSERT_EQ((int)data.symbols[137].val, 0xE561);
 }
 
 TEST(dbg_parse_scopes)
@@ -116,7 +116,7 @@ TEST(sourcemapper_addr_to_source)
 	mapper.LoadDbgFile(GetDbgPath());
 	SourceLocation loc = mapper.GetSourceLocation(0x8065);
 	ASSERT_TRUE(loc.valid);
-	ASSERT_EQ(loc.line, 1836);
+	ASSERT_EQ(loc.line, 1842);
 	ASSERT_TRUE(loc.file.find("sneslib.r65") != std::string::npos);
 }
 
@@ -126,7 +126,7 @@ TEST(sourcemapper_addr_within_span)
 	mapper.LoadDbgFile(GetDbgPath());
 	SourceLocation loc = mapper.GetSourceLocation(0x8066);
 	ASSERT_TRUE(loc.valid);
-	ASSERT_EQ(loc.line, 1836);
+	ASSERT_EQ(loc.line, 1842);
 }
 
 TEST(sourcemapper_addr_no_mapping)
@@ -143,7 +143,7 @@ TEST(sourcemapper_source_to_addr)
 	mapper.LoadDbgFile(GetDbgPath());
 	uint32_t addr = mapper.GetAddress("/home/nathan/R65/classickong.r65/src/main.r65", 1062);
 	ASSERT_TRUE(addr != 0xFFFFFFFF);
-	ASSERT_EQ((int)addr, 0xE659);
+	ASSERT_EQ((int)addr, 0xE570);
 }
 
 TEST(sourcemapper_source_to_addr_basename)
@@ -151,7 +151,7 @@ TEST(sourcemapper_source_to_addr_basename)
 	SourceMapper mapper;
 	mapper.LoadDbgFile(GetDbgPath());
 	uint32_t addr = mapper.GetAddress("main.r65", 1062);
-	ASSERT_EQ((int)addr, 0xE659);
+	ASSERT_EQ((int)addr, 0xE570);
 }
 
 TEST(sourcemapper_source_to_addr_no_file)
@@ -166,7 +166,7 @@ TEST(sourcemapper_symbol_exact)
 	SourceMapper mapper;
 	mapper.LoadDbgFile(GetDbgPath());
 	ASSERT_STR_EQ(mapper.GetSymbolName(0x8065), "wait_nmi");
-	ASSERT_STR_EQ(mapper.GetSymbolName(0xE64A), "main");
+	ASSERT_STR_EQ(mapper.GetSymbolName(0xE561), "main");
 }
 
 TEST(sourcemapper_symbol_no_match)
