@@ -96,12 +96,13 @@ static void PrintUsage(const char* prog)
 		"  <rom_path>              CLI interactive mode (default)\n"
 		"  <rom_path> --batch      CLI batch mode\n"
 		"  --dap                   DAP mode: speak DAP JSON on stdin/stdout\n"
+		"                          (shows the game window; add --headless to suppress)\n"
 		"\n"
 		"Options:\n"
 		"  --dap                   DAP mode (for VSCode integration)\n"
 		"  --batch                 Batch mode (non-interactive)\n"
 		"  --json                  JSON output (CLI/batch modes)\n"
-		"  --headless              No SDL window (max speed)\n"
+		"  --headless              No SDL window or audio (max speed)\n"
 		"  --break <addr>          Set initial breakpoint (hex, repeatable)\n"
 		"  --timeout <ms>          Batch timeout (default 10000)\n"
 		"  --check-reg <R>=<V>     Assert register (batch)\n"
@@ -210,6 +211,13 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 // --- DAP mode ---
 static int RunDapMode(CliArgs& args)
 {
+	// Redirect stdout → stderr before anything else runs, so emulator and SDL
+	// chatter can't corrupt the DAP stream. The real stdout goes to DapServer.
+	fflush(stdout);
+	int savedFd = dup(fileno(stdout));
+	dup2(fileno(stderr), fileno(stdout));
+	FILE* dapOutput = fdopen(savedFd, "w");
+
 	// Set home folder
 	{
 		const char* home = getenv("MESEN_HOME");
@@ -222,6 +230,39 @@ static int RunDapMode(CliArgs& args)
 	std::unique_ptr<Emulator> emu(new Emulator());
 	emu->Initialize(false);
 	KeyManager::SetSettings(emu->GetSettings());
+
+	// Video/audio/input. --dap on its own shows the game window and plays
+	// sound while debugging; pass --headless to run without one.
+	SdlRenderer* renderer = nullptr;
+	SdlSoundManager* soundManager = nullptr;
+#ifndef __APPLE__
+	LinuxKeyManager* keyManager = nullptr;
+#endif
+	bool sdlInitialized = false;
+
+	if(!args.headless) {
+		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+			// No display available — keep the debug session usable rather than
+			// failing the launch outright.
+			fprintf(stderr, "[DAP] SDL_Init failed (%s), continuing without video/audio.\n", SDL_GetError());
+			args.headless = true;
+		} else {
+			sdlInitialized = true;
+			renderer = new SdlRenderer(emu.get(), nullptr);
+			soundManager = new SdlSoundManager(emu.get());
+#ifndef __APPLE__
+			keyManager = new LinuxKeyManager(emu.get());
+			KeyManager::RegisterKeyManager(keyManager);
+#endif
+		}
+	}
+
+	if(args.headless) {
+		// Max speed, but keep rendering every frame so state reads at a
+		// breakpoint reflect the current PPU output.
+		emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
+		emu->GetSettings()->GetSnesConfig().DisableFrameSkipping = true;
+	}
 
 	// Enable ALL debugger flags before ROM load — only the ones for the loaded
 	// console will actually matter. This avoids needing to know console type upfront.
@@ -240,16 +281,19 @@ static int RunDapMode(CliArgs& args)
 	emu->GetSettings()->SetFlag(EmulationFlags::ConsoleMode);
 	emu->Pause();
 
-	// Redirect stdout → stderr so Mesen's cout/printf doesn't corrupt
-	// the DAP stream. Give the real stdout fd to DapServer.
-	fflush(stdout);
-	int savedFd = dup(fileno(stdout));
-	dup2(fileno(stderr), fileno(stdout));
-	FILE* dapOutput = fdopen(savedFd, "w");
-
 	// DapServer creates and registers its own DapNotificationListener.
 	// ROM loading is handled by the DAP launch request.
 	DapServer server(emu.get(), dapOutput);
+
+	if(renderer) {
+		// Closing the game window ends the debug session. VSCode replies to
+		// the terminated event with a disconnect, which unblocks the reader.
+		renderer->SetQuitCallback([&server]() {
+			fprintf(stderr, "[DAP] Window closed, terminating debug session.\n");
+			server.SendTerminatedEvent();
+		});
+	}
+
 	server.Run();
 
 	fclose(dapOutput);
@@ -257,6 +301,15 @@ static int RunDapMode(CliArgs& args)
 	// Cleanup
 	emu->Stop(true);
 	emu->Release();
+
+	delete renderer;
+	delete soundManager;
+#ifndef __APPLE__
+	delete keyManager;
+#endif
+	if(sdlInitialized) {
+		SDL_Quit();
+	}
 
 	return 0;
 }
@@ -298,8 +351,11 @@ static int RunCliMode(CliArgs& args)
 		KeyManager::RegisterKeyManager(keyManager);
 #endif
 	} else {
-		// Headless: max speed
+		// Headless: max speed. Keep rendering every frame anyway so
+		// breakpoint screenshots reflect the current PPU state instead of
+		// whichever frame last beat the 10ms frame-skip timer.
 		emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
+		emu->GetSettings()->GetSnesConfig().DisableFrameSkipping = true;
 	}
 
 	// 3. Register notification listener
