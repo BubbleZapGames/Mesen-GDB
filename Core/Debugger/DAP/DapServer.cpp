@@ -377,12 +377,15 @@ void DapServer::HandleStackTrace(const JsonValue& request)
 				source.Set("path", JsonValue::MakeString(loc.file));
 				frame.Set("source", std::move(source));
 			} else {
+				// No line mapping for this address. Emit no source at all: a
+				// DAP source is only loadable through a path or a non-zero
+				// sourceReference, and one carrying neither makes the client
+				// ask for its content with a "source" request we do not serve.
+				// Subdue the frame instead — the address is already its name,
+				// and the disassembly view covers reading the code.
 				frame.Set("line", JsonValue::MakeNumber(0));
 				frame.Set("column", JsonValue::MakeNumber(0));
-				auto source = JsonValue::MakeObject();
-				source.Set("name", JsonValue::MakeString(CpuTypeName(cpu)));
-				source.Set("presentationHint", JsonValue::MakeString("deemphasize"));
-				frame.Set("source", std::move(source));
+				frame.Set("presentationHint", JsonValue::MakeString("subtle"));
 			}
 
 			char ipr[32];
