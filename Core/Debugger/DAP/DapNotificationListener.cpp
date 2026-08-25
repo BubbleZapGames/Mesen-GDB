@@ -3,8 +3,35 @@
 #include "DapTypes.h"
 #include "Core/Debugger/DebugTypes.h"
 #include "Core/Shared/CpuType.h"
+#include <chrono>
 
 DapNotificationListener::DapNotificationListener(DapServer* server) : _server(server) {}
+
+void DapNotificationListener::ResetBreak()
+{
+	std::lock_guard<std::mutex> lock(_mutex);
+	_breakOccurred = false;
+	_breakWasBreakpoint = false;
+}
+
+bool DapNotificationListener::LastBreakWasBreakpoint()
+{
+	std::lock_guard<std::mutex> lock(_mutex);
+	return _breakWasBreakpoint;
+}
+
+bool DapNotificationListener::WaitForBreak(int timeoutMs)
+{
+	std::unique_lock<std::mutex> lock(_mutex);
+	if(_breakOccurred) {
+		_breakOccurred = false;
+		return true;
+	}
+	bool arrived = _cv.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+		[this]{ return _breakOccurred; });
+	_breakOccurred = false;
+	return arrived;
+}
 
 void DapNotificationListener::ProcessNotification(ConsoleNotificationType type, void* parameter)
 {
@@ -15,6 +42,21 @@ void DapNotificationListener::ProcessNotification(ConsoleNotificationType type, 
 	}
 
 	if(type == ConsoleNotificationType::CodeBreak) {
+		{
+			// Wake a step loop waiting on this break before anything else.
+			std::lock_guard<std::mutex> lock(_mutex);
+			_breakOccurred = true;
+			_breakWasBreakpoint =
+				((BreakEvent*)parameter)->Source == BreakSource::Breakpoint;
+			_cv.notify_all();
+		}
+
+		if(_server->IsStepping()) {
+			// Mid-step: the loop decides whether this address is somewhere the
+			// user should see, and sends the stopped event once it settles.
+			return;
+		}
+
 		BreakEvent* breakEvent = (BreakEvent*)parameter;
 		const char* reason;
 

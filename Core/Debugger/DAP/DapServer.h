@@ -44,6 +44,10 @@ private:
 
 	SourceMapper _sourceMapper;
 
+	// Set while a source-line step is walking instructions. The notification
+	// listener checks it so intermediate breaks stay invisible to the client.
+	std::atomic<bool> _stepping{false};
+
 	// Response/event helpers
 	JsonValue MakeResponse(const JsonValue& request, bool success);
 	JsonValue MakeEvent(const char* event);
@@ -73,6 +77,12 @@ private:
 	void HandlePause(const JsonValue& request);
 	void HandleDisconnect(const JsonValue& request);
 
+	// Stepping helpers
+	/** Where the CPU is now: mapped source line (0 if none) and stack depth. */
+	void CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth);
+	/** Shared body of stepIn/next: walk instructions until the line changes. */
+	void StepSourceLine(const JsonValue& request, bool intoCalls);
+
 	// Request handlers — Phase 2
 	void HandleStepIn(const JsonValue& request);
 	void HandleNext(const JsonValue& request);
@@ -91,6 +101,7 @@ public:
 
 	void Run();
 	void SendStoppedEvent(const char* reason, CpuType cpu);
+	bool IsStepping() const { return _stepping; }
 	void SendTerminatedEvent();
 
 	bool IsConfigDone() const { return _configDone; }

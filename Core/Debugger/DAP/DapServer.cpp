@@ -524,36 +524,189 @@ void DapServer::HandleDisconnect(const JsonValue& request)
 
 // ── Phase 2: Stepping ──────────────────────────────────────────────
 
-void DapServer::HandleStepIn(const JsonValue& request)
+// A source line is many instructions, so a single-instruction step mostly
+// leaves the client sitting on the same line — and makes stepIn and next look
+// identical, since they only diverge on the one instruction that is a call.
+// Walk instructions until the reported position is somewhere the user would
+// recognise as a new place.
+static const int STEP_BREAK_TIMEOUT_MS = 5000;
+// Enough to cross any reasonable statement; a step that runs into a long
+// unmapped routine stops where it got to rather than hanging the session.
+static const uint32_t MAX_STEP_INSTRUCTIONS = 200000;
+// Each step costs a ~10ms round trip to the emulation thread, so a line that
+// spins — a macro like wait_autojoy!, or any hardware poll — takes minutes one
+// instruction at a time. Stay exact for as long as a straight-line statement
+// could plausibly run, then escalate: past that point we are going round a loop
+// that lives entirely on one line, and only getting out of it matters.
+static const uint32_t EXACT_STEP_INSTRUCTIONS = 32;
+// StepOver ignores a count > 1, so batching has to use plain Step and lean on
+// the depth handling below to keep step-over semantics.
+static const uint32_t MAX_STEP_BATCH = 64;
+// Hard ceiling on one step request. A wait on something the user has not done
+// yet (a button press) would otherwise never return; stopping inside it at
+// least hands control back and shows where it is stuck.
+static const int STEP_TIME_BUDGET_MS = 5000;
+// A callee's first instructions often carry no line record (the label itself
+// gets none), so give a new frame this long to produce one before writing it
+// off as code we have no source for.
+static const uint32_t CALLEE_PROBE_INSTRUCTIONS = 64;
+
+void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth)
+{
+	file.clear();
+	line = 0;
+	depth = 0;
+
+	DebuggerRequest req = _emu->GetDebugger(false);
+	Debugger* dbg = req.GetDebugger();
+	if(!dbg) {
+		return;
+	}
+
+	uint32_t pc = dbg->GetProgramCounter(cpu, true);
+
+	// Resolve through the ROM offset for the same reason the stack trace does:
+	// a FastROM/HiROM game runs the same bytes at several addresses.
+	SourceLocation loc;
+	AddressInfo relAddr { (int32_t)pc, DebugUtilities::GetCpuMemoryType(cpu) };
+	AddressInfo absAddr = dbg->GetAbsoluteAddress(relAddr);
+	if(absAddr.Address >= 0 && DebugUtilities::IsRom(absAddr.Type)) {
+		loc = _sourceMapper.GetSourceLocationByRomOffset((uint32_t)absAddr.Address);
+	}
+	if(!loc.valid) {
+		loc = _sourceMapper.GetSourceLocation(pc);
+	}
+	if(loc.valid) {
+		file = loc.file;
+		line = loc.line;
+	}
+
+	CallstackManager* csm = dbg->GetCallstackManager(cpu);
+	if(csm) {
+		StackFrameInfo frames[64];
+		uint32_t count = 0;
+		csm->GetCallstack(frames, count);
+		depth = count;
+	}
+}
+
+void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 {
 	const JsonValue& args = request["arguments"];
 	int threadId = (int)args["threadId"].GetNumber();
 	CpuType cpu = ThreadIdToCpuType(threadId);
-
-	DebuggerRequest req = _emu->GetDebugger(false);
-	Debugger* dbg = req.GetDebugger();
-	if(dbg) {
-		dbg->Step(cpu, 1, StepType::Step, BreakSource::CpuStep);
-	}
+	bool byInstruction = args["granularity"].GetString() == "instruction";
 
 	auto resp = MakeResponse(request, true);
 	SendResponse(std::move(resp));
+
+	StepType overCalls = intoCalls ? StepType::Step : StepType::StepOver;
+
+	// The disassembly view asks for one instruction and means it.
+	if(byInstruction) {
+		DebuggerRequest req = _emu->GetDebugger(false);
+		if(Debugger* dbg = req.GetDebugger()) {
+			dbg->Step(cpu, 1, overCalls, BreakSource::CpuStep);
+		}
+		return;
+	}
+
+	std::string startFile;
+	int startLine = 0;
+	uint32_t startDepth = 0;
+	CurrentLocation(cpu, startFile, startLine, startDepth);
+
+	_stepping = true;
+	uint32_t probed = 0;
+	uint32_t onSameLine = 0;
+	uint32_t batch = 1;
+	auto deadline = std::chrono::steady_clock::now()
+		+ std::chrono::milliseconds(STEP_TIME_BUDGET_MS);
+
+	for(uint32_t stepped = 0; stepped < MAX_STEP_INSTRUCTIONS; ) {
+		std::string file;
+		int line = 0;
+		uint32_t depth = 0;
+		StepType type = overCalls;
+
+		if(std::chrono::steady_clock::now() >= deadline) {
+			// Out of time — stop here rather than leaving the client hanging.
+			break;
+		}
+
+		if(onSameLine >= EXACT_STEP_INSTRUCTIONS && batch < MAX_STEP_BATCH) {
+			// Double each time rather than jumping to the cap, so a loop that
+			// ends just after the exact phase is not overshot by much.
+			batch *= 2;
+		}
+		stepped += batch;
+
+		_listener->ResetBreak();
+		{
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(!dbg) {
+				break;
+			}
+			dbg->Step(cpu, (int)batch, batch > 1 ? StepType::Step : type,
+				BreakSource::CpuStep);
+		}
+		if(!_listener->WaitForBreak(STEP_BREAK_TIMEOUT_MS)) {
+			break;
+		}
+
+		if(_listener->LastBreakWasBreakpoint()) {
+			// A breakpoint outranks the step that was in progress.
+			_stepping = false;
+			SendStoppedEvent(DapStoppedReason::Breakpoint, cpu);
+			return;
+		}
+
+		CurrentLocation(cpu, file, line, depth);
+
+		if(depth < startDepth) {
+			// Returned to the caller — that is a new place either way.
+			break;
+		}
+		if(depth > startDepth) {
+			if(intoCalls && line != 0) {
+				// Stepped into something we have source for.
+				break;
+			}
+			if(intoCalls && ++probed < CALLEE_PROBE_INSTRUCTIONS) {
+				// Still in the prologue, most likely — keep looking.
+				continue;
+			}
+			// Genuinely no source for this callee: nothing to show, so leave
+			// it in one operation rather than single-stepping the whole body.
+			probed = 0;
+			DebuggerRequest req = _emu->GetDebugger(false);
+			if(Debugger* dbg = req.GetDebugger()) {
+				_listener->ResetBreak();
+				dbg->Step(cpu, 1, StepType::StepOut, BreakSource::CpuStep);
+				_listener->WaitForBreak(STEP_BREAK_TIMEOUT_MS);
+			}
+			continue;
+		}
+		probed = 0;
+		if(line != 0 && (line != startLine || file != startFile)) {
+			break;
+		}
+		onSameLine++;
+	}
+	_stepping = false;
+
+	SendStoppedEvent(DapStoppedReason::Step, cpu);
+}
+
+void DapServer::HandleStepIn(const JsonValue& request)
+{
+	StepSourceLine(request, true);
 }
 
 void DapServer::HandleNext(const JsonValue& request)
 {
-	const JsonValue& args = request["arguments"];
-	int threadId = (int)args["threadId"].GetNumber();
-	CpuType cpu = ThreadIdToCpuType(threadId);
-
-	DebuggerRequest req = _emu->GetDebugger(false);
-	Debugger* dbg = req.GetDebugger();
-	if(dbg) {
-		dbg->Step(cpu, 1, StepType::StepOver, BreakSource::CpuStep);
-	}
-
-	auto resp = MakeResponse(request, true);
-	SendResponse(std::move(resp));
+	StepSourceLine(request, false);
 }
 
 void DapServer::HandleStepOut(const JsonValue& request)
