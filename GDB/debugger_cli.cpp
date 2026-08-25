@@ -10,6 +10,7 @@
 #include "Debugger/Breakpoint.h"
 #include "Debugger/MemoryDumper.h"
 #include "Debugger/Disassembler.h"
+#include "Debugger/ITraceLogger.h"
 #include "Debugger/CallstackManager.h"
 #include "Debugger/TraceLogFileSaver.h"
 #include "Debugger/DebugUtilities.h"
@@ -490,10 +491,30 @@ void DebuggerCli::CmdTrace(const std::string& filename)
 	Debugger* dbg = req.GetDebugger();
 	if(!dbg) return;
 
+	// The file saver only receives rows when the trace logger for the CPU is
+	// itself enabled — enabling the saver alone yields an empty file.
+	ITraceLogger* logger = dbg->GetTraceLogger(_primaryCpu);
+
 	if(filename == "off") {
+		if(logger) {
+			TraceLoggerOptions opt = {};
+			opt.Enabled = false;
+			logger->SetOptions(opt);
+		}
 		dbg->GetTraceLogFileSaver()->StopLogging();
 		std::cout << "Trace logging stopped.\n";
 	} else {
+		if(!logger) {
+			std::cout << "No trace logger for this CPU.\n";
+			return;
+		}
+		TraceLoggerOptions opt = {};
+		opt.Enabled = true;
+		opt.IndentCode = false;
+		opt.UseLabels = false;
+		opt.Condition[0] = '\0';
+		opt.Format[0] = '\0';
+		logger->SetOptions(opt);
 		dbg->GetTraceLogFileSaver()->StartLogging(filename);
 		std::cout << "Tracing to: " << filename << "\n";
 	}
