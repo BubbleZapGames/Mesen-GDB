@@ -100,6 +100,7 @@ bool DbgFileParser::Parse(const std::string& path, DbgData& out)
 				else if(k == "start") s->start = ParseHexOrDec(v);
 				else if(k == "size") s->size = ParseHexOrDec(v);
 				else if(k == "ooffs") s->ooffs = ParseHexOrDec(v);
+				else if(k == "type") s->type = v;
 			}, &s);
 			if(s.id >= 0) {
 				if(s.id >= (int)out.segments.size()) out.segments.resize(s.id + 1);

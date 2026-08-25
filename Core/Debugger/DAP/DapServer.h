@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <map>
 #include "DapTypes.h"
 #include "DapJson.h"
 #include "DapMessageReader.h"
@@ -27,7 +28,20 @@ private:
 	bool _configDone = false;
 	bool _stopOnEntry = true;
 	uint32_t _nextBreakpointId = 1;
-	std::vector<Breakpoint> _breakpoints;
+	// Breakpoints per source path — DAP sends setBreakpoints once per file,
+	// so keeping one flat list would drop every other file's breakpoints.
+	std::map<std::string, std::vector<Breakpoint>> _breakpointsBySource;
+
+	// The original requests, kept so they can be resolved again once symbols
+	// are available. VSCode sends setBreakpoints as soon as it sees the
+	// initialized event, which is before launch has loaded the .dbg.
+	struct SourceBreakpointRequest {
+		uint32_t dapId;
+		int line;
+		std::string condition;
+	};
+	std::map<std::string, std::vector<SourceBreakpointRequest>> _requestsBySource;
+
 	SourceMapper _sourceMapper;
 
 	// Response/event helpers
@@ -43,6 +57,9 @@ private:
 
 	// Breakpoint helpers
 	void SyncBreakpoints();
+	// Rebuild _breakpointsBySource from _requestsBySource using current symbols
+	void ResolveBreakpoints();
+	bool ResolveOne(const std::string& sourcePath, const SourceBreakpointRequest& req, Breakpoint& out) const;
 
 	// Request handlers — Phase 1
 	void HandleInitialize(const JsonValue& request);

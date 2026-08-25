@@ -9,6 +9,7 @@ struct DbgSegment {
 	uint32_t start = 0;   // CPU base address
 	uint32_t size = 0;
 	uint32_t ooffs = 0;   // ROM file offset
+	std::string type;     // "ro" for ROM, "rw" for RAM/zeropage
 };
 
 struct DbgFile {

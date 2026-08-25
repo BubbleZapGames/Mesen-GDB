@@ -256,6 +256,12 @@ void DapServer::HandleLaunch(const JsonValue& request)
 		}
 	}
 
+	// LoadRom creates a fresh debugger and symbols only exist now, so anything
+	// set before launch (VSCode sends setBreakpoints as soon as it sees the
+	// initialized event) has to be resolved and re-applied here.
+	ResolveBreakpoints();
+	SyncBreakpoints();
+
 	auto resp = MakeResponse(request, true);
 	SendResponse(std::move(resp));
 }
@@ -263,6 +269,10 @@ void DapServer::HandleLaunch(const JsonValue& request)
 void DapServer::HandleConfigurationDone(const JsonValue& request)
 {
 	_configDone = true;
+
+	// Last chance to install breakpoints before execution resumes
+	ResolveBreakpoints();
+	SyncBreakpoints();
 
 	auto resp = MakeResponse(request, true);
 	SendResponse(std::move(resp));
@@ -324,7 +334,21 @@ void DapServer::HandleStackTrace(const JsonValue& request)
 			// Encode threadId into upper bits of frameId for scopes
 			frame.Set("id", JsonValue::MakeNumber((threadId << 16) | frameId));
 
-			std::string symName = _sourceMapper.GetSymbolName(addr);
+			// Resolve the symbol and the source line through the absolute ROM
+			// offset: a FastROM/HiROM game executes the same bytes through
+			// several bank mirrors, and only the absolute address lines up
+			// with what the .dbg recorded.
+			AddressInfo relAddr { (int32_t)addr, DebugUtilities::GetCpuMemoryType(cpu) };
+			AddressInfo absAddr = dbg->GetAbsoluteAddress(relAddr);
+			bool haveRom = absAddr.Address >= 0 && DebugUtilities::IsRom(absAddr.Type);
+
+			std::string symName;
+			if(haveRom) {
+				symName = _sourceMapper.GetSymbolNameByRomOffset((uint32_t)absAddr.Address);
+			}
+			if(symName.empty()) {
+				symName = _sourceMapper.GetSymbolName(addr);
+			}
 			char addrStr[16];
 			snprintf(addrStr, sizeof(addrStr), "$%04X", addr & 0xFFFF);
 			std::string name;
@@ -338,7 +362,13 @@ void DapServer::HandleStackTrace(const JsonValue& request)
 			}
 			frame.Set("name", JsonValue::MakeString(name));
 
-			SourceLocation loc = _sourceMapper.GetSourceLocation(addr);
+			SourceLocation loc;
+			if(haveRom) {
+				loc = _sourceMapper.GetSourceLocationByRomOffset((uint32_t)absAddr.Address);
+			}
+			if(!loc.valid) {
+				loc = _sourceMapper.GetSourceLocation(addr);
+			}
 			if(loc.valid && !loc.file.empty()) {
 				frame.Set("line", JsonValue::MakeNumber(loc.line));
 				frame.Set("column", JsonValue::MakeNumber(1));
@@ -557,12 +587,121 @@ struct BreakpointData {
 	char condition[1000];
 };
 
+// Absolute (ROM) memory type for a CPU, used so execution breakpoints match
+// regardless of which bank mirror the code is fetched through (FastROM, HiROM).
+static MemoryType GetPrgRomMemoryType(CpuType cpuType)
+{
+	switch(cpuType) {
+		case CpuType::Snes:
+		case CpuType::Sa1:
+		case CpuType::Gsu:
+		case CpuType::Cx4:
+		case CpuType::St018:
+		case CpuType::NecDsp: return MemoryType::SnesPrgRom;
+		case CpuType::Spc: return MemoryType::SpcRam;
+		case CpuType::Gameboy: return MemoryType::GbPrgRom;
+		case CpuType::Nes: return MemoryType::NesPrgRom;
+		case CpuType::Pce: return MemoryType::PcePrgRom;
+		case CpuType::Sms: return MemoryType::SmsPrgRom;
+		case CpuType::Gba: return MemoryType::GbaPrgRom;
+		case CpuType::Ws: return MemoryType::WsPrgRom;
+	}
+	return MemoryType::SnesPrgRom;
+}
+
 void DapServer::SyncBreakpoints()
 {
 	DebuggerRequest req = _emu->GetDebugger(false);
 	Debugger* dbg = req.GetDebugger();
-	if(dbg) {
-		dbg->SetBreakpoints(_breakpoints.data(), (uint32_t)_breakpoints.size());
+	if(!dbg) {
+		// No ROM loaded yet — breakpoints are re-applied after launch.
+		return;
+	}
+
+	std::vector<Breakpoint> all;
+	for(auto& entry : _breakpointsBySource) {
+		all.insert(all.end(), entry.second.begin(), entry.second.end());
+	}
+	dbg->SetBreakpoints(all.data(), (uint32_t)all.size());
+}
+
+bool DapServer::ResolveOne(const std::string& sourcePath, const SourceBreakpointRequest& req, Breakpoint& out) const
+{
+	auto cpuTypes = _emu->GetCpuTypes();
+	CpuType primaryCpu = cpuTypes.empty() ? CpuType::Snes : cpuTypes[0];
+
+	bool isSourceFile = !sourcePath.empty() && sourcePath[0] != '0' && sourcePath[0] != '$';
+	int32_t addr = -1;
+	bool useRomOffset = false;
+
+	if(isSourceFile) {
+		if(!_sourceMapper.IsLoaded()) {
+			// Symbols not loaded yet — resolve again after launch
+			return false;
+		}
+		// The .dbg records ROM file offsets. Matching on the absolute address
+		// makes the breakpoint fire whichever bank mirror executes the code —
+		// a FastROM game runs the same bytes at $80:xxxx as at $00:xxxx.
+		uint32_t romOffset = _sourceMapper.GetRomOffset(sourcePath, req.line);
+		if(romOffset != 0xFFFFFFFF) {
+			addr = (int32_t)romOffset;
+			useRomOffset = true;
+		} else {
+			uint32_t resolved = _sourceMapper.GetAddress(sourcePath, req.line);
+			if(resolved != 0xFFFFFFFF) {
+				addr = (int32_t)resolved;
+			}
+		}
+	} else {
+		// Disassembly view: the "line" is the address, or the path holds it
+		if(req.line > 0) {
+			addr = (int32_t)req.line;
+		}
+		if(addr < 0 && sourcePath.size() > 2 && sourcePath[0] == '0' && (sourcePath[1] == 'x' || sourcePath[1] == 'X')) {
+			try { addr = (int32_t)std::stoul(sourcePath.substr(2), nullptr, 16); } catch(...) {}
+		} else if(addr < 0 && !sourcePath.empty() && sourcePath[0] == '$') {
+			try { addr = (int32_t)std::stoul(sourcePath.substr(1), nullptr, 16); } catch(...) {}
+		}
+	}
+
+	if(addr < 0) {
+		return false;
+	}
+
+	static_assert(sizeof(BreakpointData) == sizeof(Breakpoint),
+		"BreakpointData layout must match Breakpoint");
+	BreakpointData* data = reinterpret_cast<BreakpointData*>(&out);
+	memset(data, 0, sizeof(BreakpointData));
+	data->id = req.dapId;
+	data->cpuType = primaryCpu;
+	data->memoryType = useRomOffset ? GetPrgRomMemoryType(primaryCpu)
+	                                : DebugUtilities::GetCpuMemoryType(primaryCpu);
+	data->type = BreakpointTypeFlags::Execute;
+	data->startAddr = addr;
+	data->endAddr = addr;
+	data->enabled = true;
+
+	if(!req.condition.empty() && req.condition.size() < sizeof(data->condition)) {
+		strncpy(data->condition, req.condition.c_str(), sizeof(data->condition) - 1);
+	}
+
+	return true;
+}
+
+void DapServer::ResolveBreakpoints()
+{
+	_breakpointsBySource.clear();
+	for(auto& entry : _requestsBySource) {
+		std::vector<Breakpoint> resolved;
+		for(const SourceBreakpointRequest& req : entry.second) {
+			Breakpoint bp;
+			if(ResolveOne(entry.first, req, bp)) {
+				resolved.push_back(bp);
+			}
+		}
+		if(!resolved.empty()) {
+			_breakpointsBySource[entry.first] = std::move(resolved);
+		}
 	}
 }
 
@@ -571,85 +710,48 @@ void DapServer::HandleSetBreakpoints(const JsonValue& request)
 	const JsonValue& args = request["arguments"];
 	const JsonValue& source = args["source"];
 
-	// Get the primary CPU and its memory type
-	auto cpuTypes = _emu->GetCpuTypes();
-	CpuType primaryCpu = cpuTypes.empty() ? CpuType::Snes : cpuTypes[0];
-	MemoryType cpuMemType = DebugUtilities::GetCpuMemoryType(primaryCpu);
-
-	// Clear existing breakpoints (DAP sends the full set each time)
-	_breakpoints.clear();
-	auto verifiedBps = JsonValue::MakeArray();
-
 	std::string sourcePath = source["path"].GetString();
 	std::string sourceName = source["name"].GetString();
-	bool isSourceFile = !sourcePath.empty() && sourcePath[0] != '0' && sourcePath[0] != '$';
+	std::string sourceKey = !sourcePath.empty() ? sourcePath : sourceName;
+	bool isSourceFile = !sourceKey.empty() && sourceKey[0] != '0' && sourceKey[0] != '$';
 
+	std::vector<SourceBreakpointRequest> requests;
 	const auto& breakpointsList = args["breakpoints"].GetArray();
 	for(size_t i = 0; i < breakpointsList.size(); i++) {
 		const JsonValue& bp = breakpointsList[i];
-		int32_t addr = -1;
-
-		int requestedLine = 0;
-		if(bp["line"].GetType() == JsonValue::Type::Number) {
-			requestedLine = (int)bp["line"].GetNumber();
-		}
-
-		if(isSourceFile && _sourceMapper.IsLoaded()) {
-			// Source breakpoint: resolve file+line → address
-			uint32_t resolved = _sourceMapper.GetAddress(sourcePath, requestedLine);
-			if(resolved != 0xFFFFFFFF) {
-				addr = (int32_t)resolved;
-			}
-		} else if(requestedLine > 0) {
-			// Disassembly view: line IS the address
-			addr = (int32_t)requestedLine;
-		}
-
-		// Also try parsing source.path as hex address
-		if(addr < 0 && !sourcePath.empty()) {
-			if(sourcePath.size() > 2 && sourcePath[0] == '0' && (sourcePath[1] == 'x' || sourcePath[1] == 'X')) {
-				try { addr = (int32_t)std::stoul(sourcePath.substr(2), nullptr, 16); } catch(...) {}
-			} else if(sourcePath[0] == '$') {
-				try { addr = (int32_t)std::stoul(sourcePath.substr(1), nullptr, 16); } catch(...) {}
-			}
-		}
-
-		uint32_t bpId = _nextBreakpointId++;
-		bool verified = (addr >= 0);
-
-		if(verified) {
-			Breakpoint mesenBp;
-			static_assert(sizeof(BreakpointData) == sizeof(Breakpoint),
-				"BreakpointData layout must match Breakpoint");
-			BreakpointData* data = reinterpret_cast<BreakpointData*>(&mesenBp);
-			memset(data, 0, sizeof(BreakpointData));
-			data->id = bpId;
-			data->cpuType = primaryCpu;
-			data->memoryType = cpuMemType;
-			data->type = BreakpointTypeFlags::Execute;
-			data->startAddr = addr;
-			data->endAddr = addr;
-			data->enabled = true;
-
-			// Condition support
-			std::string condition = bp["condition"].GetString();
-			if(!condition.empty() && condition.size() < sizeof(data->condition)) {
-				strncpy(data->condition, condition.c_str(), sizeof(data->condition) - 1);
-			}
-
-			_breakpoints.push_back(mesenBp);
-		}
-
-		auto bpResult = JsonValue::MakeObject();
-		bpResult.Set("id", JsonValue::MakeNumber(bpId));
-		bpResult.Set("verified", JsonValue::MakeBool(verified));
-		if(verified) {
-			bpResult.Set("line", JsonValue::MakeNumber(addr));
-		}
-		verifiedBps.Push(std::move(bpResult));
+		SourceBreakpointRequest req;
+		req.dapId = _nextBreakpointId++;
+		req.line = bp["line"].GetType() == JsonValue::Type::Number ? (int)bp["line"].GetNumber() : 0;
+		req.condition = bp["condition"].GetString();
+		requests.push_back(std::move(req));
 	}
 
+	if(requests.empty()) {
+		_requestsBySource.erase(sourceKey);
+	} else {
+		_requestsBySource[sourceKey] = requests;
+	}
+
+	ResolveBreakpoints();
 	SyncBreakpoints();
+
+	auto verifiedBps = JsonValue::MakeArray();
+	for(const SourceBreakpointRequest& req : requests) {
+		Breakpoint probe;
+		bool resolved = ResolveOne(sourceKey, req, probe);
+		// A source breakpoint we cannot resolve yet is still pending, not bad:
+		// symbols arrive with launch. Only call it unverified once we have
+		// symbols and the line genuinely has no code.
+		bool verified = resolved || (isSourceFile && !_sourceMapper.IsLoaded());
+
+		auto bpResult = JsonValue::MakeObject();
+		bpResult.Set("id", JsonValue::MakeNumber(req.dapId));
+		bpResult.Set("verified", JsonValue::MakeBool(verified));
+		// Echo back the source line, not the address — VSCode moves the
+		// breakpoint marker to whatever line is reported here.
+		bpResult.Set("line", JsonValue::MakeNumber(req.line));
+		verifiedBps.Push(std::move(bpResult));
+	}
 
 	auto resp = MakeResponse(request, true);
 	auto body = JsonValue::MakeObject();
