@@ -59,7 +59,7 @@ private:
 	void CmdBacktrace();
 	void CmdFrames(int count);
 	void CmdReset();
-	void CmdTrace(const std::string& filename);
+	void CmdTrace(const std::string& filename, bool withRegs = false);
 	void CmdDump(const std::string& type, const std::string& filename);
 	void CmdScreenshot(const std::string& filename);
 	void CmdRunUntil(const RegCondition& cond);

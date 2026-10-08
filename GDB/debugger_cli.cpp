@@ -485,7 +485,7 @@ void DebuggerCli::CmdReset()
 	PrintState();
 }
 
-void DebuggerCli::CmdTrace(const std::string& filename)
+void DebuggerCli::CmdTrace(const std::string& filename, bool withRegs)
 {
 	DebuggerRequest req = _emu->GetDebugger(false);
 	Debugger* dbg = req.GetDebugger();
@@ -514,6 +514,11 @@ void DebuggerCli::CmdTrace(const std::string& filename)
 		opt.UseLabels = false;
 		opt.Condition[0] = '\0';
 		opt.Format[0] = '\0';
+		if(withRegs) {
+			// PC, the instruction, and the registers as they were before it ran.
+			snprintf(opt.Format, sizeof(opt.Format), "%s",
+				"[PC,6h] [Disassembly] A:[A,4h] X:[X,4h] Y:[Y,4h] S:[SP,4h] D:[D,4h] DB:[DB,2h] P:[P,2h]");
+		}
 		logger->SetOptions(opt);
 		dbg->GetTraceLogFileSaver()->StartLogging(filename);
 		std::cout << "Tracing to: " << filename << "\n";
@@ -719,7 +724,7 @@ void DebuggerCli::CmdHelp()
 		"  reset             Reset emulator\n"
 		"  rwatch <cond>     Run until register condition is true\n"
 		"                    Examples: SP>$1FF, D!=0, A=$42, S<$100\n"
-		"  trace <file|off>  Start/stop trace logging\n"
+		"  trace <file|off> [regs]  Start/stop trace logging (regs: add disassembly and registers)\n"
 		"  help              Show this help\n"
 		"  quit              Exit debugger\n"
 		"\n"
@@ -854,8 +859,8 @@ void DebuggerCli::Run()
 				}
 				CmdRunUntil(cond);
 			} else if(cmd == "trace") {
-				if(tokens.size() < 2) { std::cout << "Usage: trace <file|off>\n"; continue; }
-				CmdTrace(tokens[1]);
+				if(tokens.size() < 2) { std::cout << "Usage: trace <file|off> [regs]\n"; continue; }
+				CmdTrace(tokens[1], tokens.size() > 2 && tokens[2] == "regs");
 			} else if(cmd == "help" || cmd == "h" || cmd == "?") {
 				CmdHelp();
 			} else if(cmd == "quit" || cmd == "q" || cmd == "exit") {
