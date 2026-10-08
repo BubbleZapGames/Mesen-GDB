@@ -191,11 +191,13 @@ $(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) 
 	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB)
 
 # Unit tests — only links DAP .cpp files (no emulator core needed)
-TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp
+TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp \
+           GDB/test_cpu_serializer.cpp
 TESTOBJ := $(TESTSRC:.cpp=.o)
 DAPTESTOBJ := Core/Debugger/DAP/DapJson.o Core/Debugger/DAP/DapMessageReader.o \
               Core/Debugger/DAP/DapMessageWriter.o Core/Debugger/DAP/DbgFileParser.o \
-              Core/Debugger/DAP/SourceMapper.o Utilities/SimpleLock.o Utilities/Timer.o
+              Core/Debugger/DAP/SourceMapper.o Core/Debugger/DAP/CpuStateSerializer.o \
+              Utilities/SimpleLock.o Utilities/Timer.o
 
 test: $(TESTOBJ) $(DAPTESTOBJ)
 	$(CXX) $(CXXFLAGS) -o bin/dap-test $(TESTOBJ) $(DAPTESTOBJ) -pthread $(FSLIB)
