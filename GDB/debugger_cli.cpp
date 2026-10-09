@@ -184,6 +184,8 @@ void DebuggerCli::ReplyOk(const std::string& fields)
 
 void DebuggerCli::ReplyError(const std::string& message)
 {
+	_commandFailed = true;
+	if(_lastError.empty()) _lastError = message;
 	Reply("{\"ok\":false,\"error\":\"" + JsonEscape(message) + "\"}");
 }
 
@@ -249,8 +251,26 @@ void DebuggerCli::ReplyState(const char* stopped, const std::string& fields)
 }
 
 // Usage - a malformed command: the usage text, or a JSON error.
+// Fail - record that the command failed with *message*. In JSON mode that is
+// its reply, and Fail returns true so the caller stops; otherwise the caller
+// prints its own text. A script stops at the first failed command.
+bool DebuggerCli::Fail(const std::string& message)
+{
+	_commandFailed = true;
+	if(_lastError.empty()) _lastError = message;
+	if(_jsonOutput) { ReplyError(message); return true; }
+	return false;
+}
+
+std::string DebuggerCli::StopReason()
+{
+	return _listener->IsQuitRequested() ? "quit" : "timeout";
+}
+
 void DebuggerCli::Usage(const char* text)
 {
+	_commandFailed = true;
+	if(_lastError.empty()) _lastError = text;
 	if(_jsonOutput) {
 		ReplyError(text);
 	} else {
@@ -320,10 +340,8 @@ void DebuggerCli::CmdStep(int count)
 	// Scale timeout with step count: ~1ms per 100 steps + 10s base
 	int timeoutMs = 10000 + count / 100;
 	bool done = WaitOrPause(timeoutMs);
-	if(_jsonOutput) {
-		if(done) ReplyState("step"); else ReplyError(_listener->IsQuitRequested() ? "quit" : "timeout");
-		return;
-	}
+	if(!done && Fail(StopReason())) return;
+	if(_jsonOutput) { ReplyState("step"); return; }
 	PrintState();
 }
 
@@ -337,10 +355,8 @@ void DebuggerCli::CmdNext()
 		if(dbg) dbg->Step(_primaryCpu, 1, StepType::StepOver);
 	}
 	bool done = WaitOrPause(5000);
-	if(_jsonOutput) {
-		if(done) ReplyState("step"); else ReplyError(_listener->IsQuitRequested() ? "quit" : "timeout");
-		return;
-	}
+	if(!done && Fail(StopReason())) return;
+	if(_jsonOutput) { ReplyState("step"); return; }
 	PrintState();
 }
 
@@ -354,10 +370,8 @@ void DebuggerCli::CmdFinish()
 		if(dbg) dbg->Step(_primaryCpu, 1, StepType::StepOut);
 	}
 	bool done = WaitOrPause(30000);
-	if(_jsonOutput) {
-		if(done) ReplyState("step"); else ReplyError(_listener->IsQuitRequested() ? "quit" : "timeout");
-		return;
-	}
+	if(!done && Fail(StopReason())) return;
+	if(_jsonOutput) { ReplyState("step"); return; }
 	PrintState();
 }
 
@@ -371,6 +385,16 @@ void DebuggerCli::CmdRun()
 		if(dbg) dbg->Run();
 	}
 	if(!_jsonOutput) std::cout << "Running... (press Ctrl+C to interrupt)" << std::endl;
+	if(_runTimeoutMs > 0) {
+		// A script's run has a deadline, so a breakpoint never reached is
+		// an error rather than a hang.
+		bool done = WaitOrPause(_runTimeoutMs);
+		if(!done && Fail(StopReason())) return;
+		if(_jsonOutput) { ReplyState("break"); return; }
+		if(!done) std::cout << "Timed out after " << _runTimeoutMs << " ms.\n";
+		PrintState();
+		return;
+	}
 	bool hit = _listener->WaitForBreak(0);  // wait indefinitely (or until interrupted)
 	if(_listener->IsQuitRequested()) {
 		_quit = true;
@@ -423,7 +447,7 @@ void DebuggerCli::CmdDelete(uint32_t id)
 	auto it = std::remove_if(_breakpoints.begin(), _breakpoints.end(),
 		[id](const CliBreakpoint& bp) { return bp.id == id; });
 	if(it == _breakpoints.end()) {
-		if(_jsonOutput) { ReplyError("no breakpoint " + std::to_string(id)); return; }
+		if(Fail("no breakpoint " + std::to_string(id))) return;
 		printf("No breakpoint %d\n", id);
 		return;
 	}
@@ -503,12 +527,12 @@ void DebuggerCli::CmdMemTyped(uint32_t addr, uint32_t len, int memType, const ch
 
 	uint32_t size = dbg->GetMemoryDumper()->GetMemorySize((MemoryType)memType);
 	if(size == 0) {
-		if(_jsonOutput) { ReplyError(std::string(label) + " not available"); return; }
+		if(Fail(std::string(label) + " not available")) return;
 		printf("%s not available.\n", label);
 		return;
 	}
 	if(addr >= size) {
-		if(_jsonOutput) { ReplyError("address out of range"); return; }
+		if(Fail("address out of range")) return;
 		printf("Address $%04X out of range (size: $%X / %u bytes)\n", addr, size, size);
 		return;
 	}
@@ -544,7 +568,7 @@ void DebuggerCli::CmdDump(const std::string& type, const std::string& filename)
 	}
 
 	if(memType == MemoryType::None) {
-		if(_jsonOutput) { ReplyError("unknown memory type: " + type); return; }
+		if(Fail("unknown memory type: " + type)) return;
 		printf("Unknown memory type: %s\nValid types for %s:", type.c_str(),
 			ConsoleInfo::GetConsoleName(_consoleType));
 		for(auto& r : regions) {
@@ -556,7 +580,7 @@ void DebuggerCli::CmdDump(const std::string& type, const std::string& filename)
 
 	uint32_t size = dbg->GetMemoryDumper()->GetMemorySize(memType);
 	if(size == 0) {
-		if(_jsonOutput) { ReplyError(std::string(label) + " not available"); return; }
+		if(Fail(std::string(label) + " not available")) return;
 		printf("%s not available.\n", label);
 		return;
 	}
@@ -566,7 +590,7 @@ void DebuggerCli::CmdDump(const std::string& type, const std::string& filename)
 
 	std::ofstream out(filename, std::ios::binary);
 	if(!out) {
-		if(_jsonOutput) { ReplyError("cannot write " + filename); return; }
+		if(Fail("cannot write " + filename)) return;
 		printf("Failed to open %s for writing.\n", filename.c_str());
 		return;
 	}
@@ -583,7 +607,7 @@ void DebuggerCli::CmdScreenshot(const std::string& filename)
 {
 	VideoDecoder* decoder = _emu->GetVideoDecoder();
 	if(!decoder) {
-		if(_jsonOutput) { ReplyError("no video decoder"); return; }
+		if(Fail("no video decoder")) return;
 		std::cout << "VideoDecoder not available.\n";
 		return;
 	}
@@ -599,13 +623,13 @@ void DebuggerCli::CmdScreenshot(const std::string& filename)
 		decoder->TakeScreenshot(ss);
 		std::string data = ss.str();
 		if(data.empty()) {
-			if(_jsonOutput) { ReplyError("no frame rendered yet"); return; }
+			if(Fail("no frame rendered yet")) return;
 			std::cout << "No frame data available (emulation may not have rendered a frame yet).\n";
 			return;
 		}
 		std::ofstream out(filename, std::ios::binary);
 		if(!out) {
-			if(_jsonOutput) { ReplyError("cannot write " + filename); return; }
+			if(Fail("cannot write " + filename)) return;
 			std::cout << "Failed to open " << filename << " for writing.\n";
 			return;
 		}
@@ -668,8 +692,8 @@ void DebuggerCli::CmdUntil(uint32_t addr, int maxFrames)
 	char f[64];
 	snprintf(f, sizeof(f), "\"hit\":%s,\"frames\":%u", hit ? "true" : "false",
 		_emu->GetFrameCount() - start);
+	if(!done && Fail(StopReason())) return;
 	if(_jsonOutput) {
-		if(!done) { ReplyError(_listener->IsQuitRequested() ? "quit" : "timeout"); return; }
 		ReplyState(hit ? "until" : (_emu->GetFrameCount() - start < (uint32_t)maxFrames ? "break" : "step"), f);
 		return;
 	}
@@ -680,9 +704,9 @@ void DebuggerCli::CmdUntil(uint32_t addr, int maxFrames)
 void DebuggerCli::CmdSaveState(const std::string& filename)
 {
 	bool ok = _emu->GetSaveStateManager()->SaveState(filename, false);
+	if(!ok && Fail("cannot write " + filename)) return;
 	if(_jsonOutput) {
-		if(ok) ReplyOk("\"path\":\"" + JsonEscape(filename) + "\",\"frame\":" + std::to_string(_emu->GetFrameCount()));
-		else ReplyError("cannot write " + filename);
+		ReplyOk("\"path\":\"" + JsonEscape(filename) + "\",\"frame\":" + std::to_string(_emu->GetFrameCount()));
 		return;
 	}
 	printf(ok ? "State saved to %s\n" : "Failed to save state to %s\n", filename.c_str());
@@ -692,10 +716,8 @@ void DebuggerCli::CmdLoadState(const std::string& filename)
 {
 	bool ok = _emu->GetSaveStateManager()->LoadState(filename, false);
 	SyncBreakpoints();
-	if(_jsonOutput) {
-		if(ok) ReplyState("loadstate"); else ReplyError("cannot load " + filename);
-		return;
-	}
+	if(!ok && Fail("cannot load " + filename)) return;
+	if(_jsonOutput) { ReplyState("loadstate"); return; }
 	if(!ok) { printf("Failed to load state from %s\n", filename.c_str()); return; }
 	PrintState();
 }
@@ -713,7 +735,7 @@ void DebuggerCli::CmdMovie(const std::string& filename)
 	}
 	VirtualFile file(filename);
 	if(!file.IsValid()) {
-		if(_jsonOutput) { ReplyError("movie not found: " + filename); return; }
+		if(Fail("movie not found: " + filename)) return;
 		printf("Movie not found: %s\n", filename.c_str());
 		return;
 	}
@@ -721,17 +743,15 @@ void DebuggerCli::CmdMovie(const std::string& filename)
 	// The power cycle re-breaks on the reloaded ROM; touching the debugger
 	// before it has (see WaitUntilStopped) can deadlock the two threads.
 	if(!WaitUntilStopped(5000)) {
-		if(_jsonOutput) { ReplyError("movie: emulator did not stop after the power cycle"); return; }
+		if(Fail("movie: emulator did not stop after the power cycle")) return;
 		printf("Movie started but the emulator did not stop.\n");
 		return;
 	}
 	// The power cycle resets the debugger's breakpoints.
 	SyncBreakpoints();
 	bool playing = mm->Playing();
-	if(_jsonOutput) {
-		if(playing) ReplyState("movie"); else ReplyError("movie did not start: " + filename);
-		return;
-	}
+	if(!playing && Fail("movie did not start: " + filename)) return;
+	if(_jsonOutput) { ReplyState("movie"); return; }
 	printf(playing ? "Playing %s\n" : "Failed to play %s\n", filename.c_str());
 	PrintState();
 }
@@ -782,8 +802,8 @@ void DebuggerCli::CmdFrames(int count)
 	}
 	// Each frame ~16.7ms at 60fps, allow generous overhead for debugger
 	bool done = WaitOrPause(count * 100 + 10000);
+	if(!done && Fail(StopReason())) return;
 	if(_jsonOutput) {
-		if(!done) { ReplyError(_listener->IsQuitRequested() ? "quit" : "timeout"); return; }
 		// A breakpoint ends the run early: fewer frames than asked for.
 		uint32_t ran = _emu->GetFrameCount() - start;
 		char f[48];
@@ -937,10 +957,17 @@ void DebuggerCli::CmdRunUntil(const RegCondition& cond)
 	uint8_t stateBuffer[512] = {};
 	BaseState& state = *reinterpret_cast<BaseState*>(stateBuffer);
 	uint64_t totalSteps = 0;
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(_runTimeoutMs);
 
 	// Step in small batches, checking after each
 	int batchSize = 1;
 	while(!_listener->IsInterrupted() && !_listener->IsQuitRequested()) {
+		if(_runTimeoutMs > 0 && std::chrono::steady_clock::now() > deadline) {
+			Fail("timeout");
+			printf("Timed out after %llu steps.\n", (unsigned long long)totalSteps);
+			PrintState();
+			return;
+		}
 		_listener->Reset();
 		{
 			DebuggerRequest req = _emu->GetDebugger(false);
@@ -1104,7 +1131,8 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 {
 	std::string expr = line.substr(line.find("expect") + 6);
 	expr = expr.substr(std::min(expr.size(), expr.find_first_not_of(" \t")));
-	std::string where = _scripted ? "line " + std::to_string(_lineNo) + ": " : "";
+	std::string where = !_scriptPath.empty() ? _scriptPath + ":" + std::to_string(_lineNo) + ": " :
+		_scripted ? "line " + std::to_string(_lineNo) + ": " : "";
 
 	uint32_t actual = 0;
 	uint32_t expected = 0;
@@ -1219,8 +1247,9 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 		}
 	} catch(const std::exception& e) {
 		_expectErrors++;
-		if(_jsonOutput) { ReplyError(e.what()); return; }
-		printf("ERROR %s%s: %s\n", where.c_str(), expr.c_str(), e.what());
+		if(Fail(e.what())) return;
+		// A script reports it as the command that stopped it.
+		if(_scriptPath.empty()) printf("ERROR %s%s: %s\n", where.c_str(), expr.c_str(), e.what());
 		return;
 	}
 
@@ -1231,10 +1260,11 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 		return;
 	}
 	if(pass) {
-		printf("PASS  %s\n", expr.c_str());
+		fprintf(Results(), "PASS  %s\n", expr.c_str());
 	} else {
-		printf("FAIL  %s%s: actual $%0*X (%u)\n", where.c_str(), expr.c_str(), bytes * 2, actual, actual);
+		fprintf(Results(), "FAIL  %s%s: actual $%0*X (%u)\n", where.c_str(), expr.c_str(), bytes * 2, actual, actual);
 	}
+	fflush(Results());
 }
 
 void DebuggerCli::CmdHelp()
@@ -1347,16 +1377,17 @@ int DebuggerCli::Run()
 	SyncBreakpoints();
 	_scripted = !isatty(STDIN_FILENO);
 
-	if(_jsonOutput) {
-		// Keep the real stdout for replies; everything else that writes to
-		// fd 1 - Mesen's log, the text-only commands - goes to stderr.
+	if(_jsonOutput || !_scriptPath.empty()) {
+		// Keep the real stdout for replies (a script's results); everything
+		// else that writes to fd 1 - Mesen's log, the commands' own output -
+		// goes to stderr.
 		if(!_out) {
 			fflush(stdout);
 			int fd = dup(fileno(stdout));
 			dup2(fileno(stderr), fileno(stdout));
 			_out = fdopen(fd, "w");
 		}
-		ReplyState("ready");
+		if(_jsonOutput) ReplyState("ready");
 	} else {
 		printf("Mesen CLI Debugger [%s / %s]. Type 'help' for commands.\n",
 			ConsoleInfo::GetConsoleName(_consoleType),
@@ -1372,7 +1403,7 @@ int DebuggerCli::Run()
 		if(_listener->IsQuitRequested()) {
 			break;
 		}
-		if(!_jsonOutput) std::cout << "(mesen) " << std::flush;
+		if(!_jsonOutput && _scriptPath.empty()) std::cout << "(mesen) " << std::flush;
 
 		if(!ReadLine(line)) break;
 		_lineNo++;
@@ -1400,6 +1431,8 @@ int DebuggerCli::Run()
 
 		_lastCommand = line;
 		_replied = false;
+		_commandFailed = false;
+		_lastError.clear();
 
 		const std::string& cmd = tokens[0];
 
@@ -1531,29 +1564,43 @@ int DebuggerCli::Run()
 						break;
 					}
 				}
-				if(!handled) {
-					if(_jsonOutput) ReplyError("unknown command: " + cmd);
-					else std::cout << "Unknown command: " << cmd << ". Type 'help' for commands.\n";
+				if(!handled && !Fail("unknown command: " + cmd)) {
+					std::cout << "Unknown command: " << cmd << ". Type 'help' for commands.\n";
 				}
 			}
 		} catch(const std::exception& e) {
 			if(_jsonOutput) {
 				if(!_replied) ReplyError(std::string("bad argument: ") + e.what());
 			} else {
+				Fail(e.what());
 				std::cerr << "Error: " << e.what() << "\n";
 			}
 		}
 		// The text-only commands (disasm, bt, info, trace, help) wrote to
 		// stderr; their reply is a bare acknowledgement.
 		if(_jsonOutput && !_replied) ReplyOk();
+
+		// A script stops at its first failed command: what follows would
+		// run from the wrong state.
+		if(_commandFailed && !_scriptPath.empty()) {
+			if(!_jsonOutput) {
+				fprintf(Results(), "%s:%d: %s: %s\n", _scriptPath.c_str(), _lineNo,
+					line.c_str(), _lastError.c_str());
+			}
+			_scriptStopped = true;
+			break;
+		}
 	}
 	if(_out) fflush(_out);
 
 	int expects = _expectPassed + _expectFailed + _expectErrors;
-	if(expects > 0 && !_jsonOutput) {
-		printf("expect: %d passed, %d failed", _expectPassed, _expectFailed);
-		if(_expectErrors) printf(", %d could not be evaluated", _expectErrors);
-		printf("\n");
+	if((expects > 0 || !_scriptPath.empty()) && !_jsonOutput) {
+		FILE* out = Results();
+		fprintf(out, "expect: %d passed, %d failed", _expectPassed, _expectFailed);
+		if(_expectErrors) fprintf(out, ", %d could not be evaluated", _expectErrors);
+		if(_scriptStopped) fprintf(out, "; the script stopped at line %d", _lineNo);
+		fprintf(out, "\n");
+		fflush(out);
 	}
-	return _expectErrors ? 2 : _expectFailed ? 1 : 0;
+	return (_expectErrors || _scriptStopped) ? 2 : _expectFailed ? 1 : 0;
 }

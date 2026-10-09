@@ -54,6 +54,11 @@ private:
 	int _expectPassed = 0;
 	int _expectFailed = 0;
 	int _expectErrors = 0;    // an expect that could not be evaluated
+	bool _commandFailed = false;   // the current command reported an error
+	std::string _lastError;        // ... and its message
+	std::string _scriptPath;       // --script: stop at the first failed command
+	bool _scriptStopped = false;
+	int _runTimeoutMs = 0;         // run/rwatch deadline; 0 = none (interactive)
 
 	void PrintState();
 	void PrintDisassemblyAtPC(int lines = 1);
@@ -64,6 +69,9 @@ private:
 	void ReplyError(const std::string& message);
 	void ReplyState(const char* stopped, const std::string& fields = "");
 	void Usage(const char* text);
+	bool Fail(const std::string& message);
+	std::string StopReason();
+	FILE* Results() { return _out ? _out : stdout; }   // where expect results go
 	bool ReadLine(std::string& line);
 	bool WaitOrPause(int timeoutMs);
 	uint32_t ProgramCounter();
@@ -117,13 +125,18 @@ public:
 	            CpuType primaryCpu, ConsoleType consoleType, bool jsonOutput);
 
 	void AddInitialBreakpoint(uint32_t addr);
-	// JSON mode: where replies go (the real stdout, saved before anything
-	// else could write to it). Without one, Run() redirects stdout itself.
-	void SetJsonOutput(FILE* out) { _out = out; }
+	// JSON or script mode: where replies or results go (the real stdout,
+	// saved before anything else could write to it). Without one, Run()
+	// redirects stdout itself.
+	void SetOutput(FILE* out) { _out = out; }
+	// SetScript - commands come from *path* (already on stdin): results only
+	// on stdout, the first failed command stops it, and run/rwatch give up
+	// after *timeoutMs*.
+	void SetScript(const std::string& path, int timeoutMs) { _scriptPath = path; _runTimeoutMs = timeoutMs; }
 	void SetMaximumSpeed(bool on) { _maxSpeed = on; }
 	void SetInputProvider(std::shared_ptr<CliInputProvider> input) { _input = input; }
 	void SetSymbols(const CliSymbols* symbols) { _symbols = symbols; }
 	// Run - the REPL loop. Returns the exit status: 0, or 1 if an `expect`
-	// failed, or 2 if one could not be evaluated.
+	// failed, or 2 if one could not be evaluated or a script stopped.
 	int Run();
 };

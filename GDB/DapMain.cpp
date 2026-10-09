@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <csignal>
 #include <unistd.h>
+#include <fcntl.h>
 #include <atomic>
 #include <string>
 #include <thread>
@@ -68,6 +69,7 @@ struct CliArgs {
 	int timeoutMs = 10000;
 	std::vector<std::string> breakSpecs;      // addresses or symbols, resolved after loading symbols
 	std::vector<uint32_t> breakAddresses;
+	std::string scriptPath;   // --script: debugger commands from a file, as a test
 	std::string symPath;   // --sym / --dbg; otherwise found beside the ROM
 	std::string dbgPath;
 	std::vector<BatchAssertion> assertions;
@@ -104,6 +106,8 @@ static void PrintUsage(const char* prog)
 		"Modes:\n"
 		"  <rom_path>              CLI interactive mode (default)\n"
 		"  <rom_path> --batch      CLI batch mode\n"
+		"  <rom_path> --script <f> Run a file of debugger commands as a test: exit 0 if\n"
+		"                          every expect passed, 1 if one failed, 2 on an error\n"
 		"  --dap                   DAP mode: speak DAP JSON on stdin/stdout\n"
 		"                          (shows the game window; add --headless to suppress)\n"
 		"\n"
@@ -114,7 +118,8 @@ static void PrintUsage(const char* prog)
 		"                          JSON reply line per command (see CLAUDE.md)\n"
 		"  --headless              No SDL window or audio (max speed)\n"
 		"  --break <addr>          Set initial breakpoint (hex or symbol, repeatable)\n"
-		"  --timeout <ms>          Batch timeout (default 10000)\n"
+		"  --timeout <ms>          Batch timeout, or a script's limit for run and rwatch\n"
+		"                          (default 10000)\n"
 		"  --check-reg <R>=<V>     Assert register (batch)\n"
 		"  --check-mem <A>=<V>     Assert memory byte (batch)\n"
 		"  --check-mem16 <A>=<V>   Assert memory word (batch)\n"
@@ -209,6 +214,8 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 				fprintf(stderr, "Invalid --ram-init %s (zeros, ones or random)\n", args.ramInit.c_str());
 				return false;
 			}
+		} else if(arg == "--script" && i + 1 < argc) {
+			args.scriptPath = argv[++i];
 		} else if(arg == "--sym" && i + 1 < argc) {
 			args.symPath = argv[++i];
 		} else if(arg == "--dbg" && i + 1 < argc) {
@@ -367,11 +374,28 @@ static int RunCliMode(CliArgs& args)
 		return 2;
 	}
 
-	// A JSON CLI session owns stdout for its replies: point fd 1 at stderr
+	// A JSON or script session owns stdout for its replies: point fd 1 at stderr
 	// before the emulator exists, so the ROM-load log cannot precede the
 	// first reply.
+	if(!args.scriptPath.empty()) {
+		if(args.batchMode) {
+			fprintf(stderr, "Error: --script and --batch are separate modes.\n");
+			return 2;
+		}
+		// The script is the session's stdin; RAM is pinned unless asked
+		// otherwise, so a test runs the same every time.
+		int fd = open(args.scriptPath.c_str(), O_RDONLY);
+		if(fd < 0) {
+			fprintf(stderr, "Error: cannot read script %s\n", args.scriptPath.c_str());
+			return 2;
+		}
+		dup2(fd, STDIN_FILENO);
+		close(fd);
+		if(args.ramInit.empty()) args.ramInit = "zeros";
+	}
+
 	FILE* jsonOut = nullptr;
-	if(args.jsonOutput && !args.batchMode) {
+	if((args.jsonOutput || !args.scriptPath.empty()) && !args.batchMode) {
 		fflush(stdout);
 		int fd = dup(fileno(stdout));
 		dup2(fileno(stderr), fileno(stdout));
@@ -618,7 +642,8 @@ static int RunCliMode(CliArgs& args)
 		exitCode = runner.Run();
 	} else {
 		DebuggerCli cli(emu.get(), listener, primaryCpu, consoleType, args.jsonOutput);
-		if(jsonOut) cli.SetJsonOutput(jsonOut);
+		if(jsonOut) cli.SetOutput(jsonOut);
+		if(!args.scriptPath.empty()) cli.SetScript(args.scriptPath, args.timeoutMs);
 		input = std::make_shared<CliInputProvider>(emu.get());
 		input->Attach();
 		emu->GetNotificationManager()->RegisterNotificationListener(input);

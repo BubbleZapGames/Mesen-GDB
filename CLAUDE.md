@@ -33,6 +33,10 @@ bin/linux-x64/Release/mesen-gdb game.sfc --batch --headless \
 # Batch mode exit codes: 0=pass, 1=fail, 2=error/timeout
 # Add --json for machine-readable output
 
+# Test script: debugger commands from a file, with expect checks
+bin/linux-x64/Release/mesen-gdb game.sfc --headless --script tests/camera
+# Exit codes: 0 = every expect passed, 1 = one failed, 2 = a command failed (the script stops)
+
 # DAP server (for VSCode integration)
 bin/linux-x64/Release/mesen-gdb --dap
 ```
@@ -63,6 +67,13 @@ bin/linux-x64/Release/mesen-gdb --dap
   returns 1 if any failed, 2 if one could not be evaluated, and `main` exits with it. JSON:
   `pass`, `actual`, `expected`, `line`.
 - `info symbols [text]` — symbols whose names contain *text*.
+
+`--script <file>` (any name, no extension expected) puts the file on stdin and calls
+`DebuggerCli::SetScript`: stdout carries only results (PASS/FAIL, the stopping error, the count;
+everything else goes to stderr, as in JSON mode), the first failed command stops the script with exit
+2, `run`/`rwatch` give up after `--timeout` ms, and `--ram-init` defaults to zeros. A command marks
+itself failed through `Fail()` (or `Usage`/`ReplyError`, which do too), so any new error path must use
+it or a script will run on past the error.
 
 Addresses are hex (`$1234`, `0x1234`, `1234`, `00:8000`) or a symbol, optionally `name+off` (hex).
 `GDB/cli_symbols.*` loads them - the ROM's `.sym` and its `.dbg` (or `main.dbg`), or `--sym`/`--dbg` -

@@ -13,7 +13,7 @@ emulation core of [Mesen2](https://github.com/SourMesen/Mesen2). One program,
   client) can debug a ROM at the source line, using the compiler's `.dbg`
   symbols.
 - **A unit-testing framework.** Test scripts of debugger commands with
-  `expect` checks, a batch mode that checks registers and memory for CI, a
+  `expect` checks (`--script`), a batch mode that checks registers and memory for CI, a
   JSON protocol for programs to drive, and a Python package (`python/`) that
   runs ROM tests as ordinary pytest tests.
 
@@ -197,27 +197,56 @@ own thread.
 
 ### Test scripts
 
-A test can be a plain file of debugger commands with `expect` checks:
+A test can be a plain file of debugger commands with `expect` checks. Any file
+name will do:
 
 ```
-# tests/camera.mgdb: the camera follows the airframe right.
+# The camera follows the airframe right.
 input 1 x
 frames 30
 input 1 none
 frames 20
-input 1 right
+input 1 right     # fly right
 frames 30
 input 1 select
 until snapshot_point 20
 expect PC == snapshot_point
 expect camera_x == 0x005A
 expect units__hp[3]:u8 > 0
-quit
 ```
 
 ```bash
-mesen-gdb game.sfc --headless --ram-init zeros < tests/camera.mgdb
+mesen-gdb game.sfc --headless --script tests/camera
 ```
+
+```
+PASS  PC == snapshot_point
+PASS  camera_x == 0x005A
+FAIL  tests/camera:13: units__hp[3]:u8 > 0: actual $00 (0)
+expect: 2 passed, 1 failed
+```
+
+`--script` runs the file and exits with a status: 0 if every check passed, 1
+if one failed, and 2 if the script could not finish. Specifically:
+- **A failed check** is reported and the script goes on, so one run shows
+  every mismatch.
+- **A failed command** stops the script, since what follows would run from the
+  wrong state: an unknown symbol, a bad argument, a check that cannot be
+  evaluated, or a run that times out. It is reported as `file:line: command:
+  error`.
+- **Every run is bounded.** `frames`, `until` and `step` already are. `run`
+  and `rwatch` give up after `--timeout` milliseconds (default 10000), so a
+  breakpoint that is never reached fails the test instead of hanging it.
+- **Power-on RAM is zeros** unless `--ram-init` says otherwise, so a script
+  runs the same every time.
+- **Only results go to stdout:** the `PASS`/`FAIL` lines, a stopped script's
+  error, and the count. The commands' own output and the emulator's log go to
+  stderr.
+
+`#` starts a comment, on its own line or after a command. A script can also be
+piped to the prompt (`mesen-gdb game.sfc --headless < tests/camera`); the
+checks and the exit status work the same, but a failed command does not stop
+it.
 
 `expect <what> <op> <value>` checks one value:
 - **`<what>`** is a register (`A`, `X`, `Y`, `SP`, `D`, `DBR`, `PS`, `K`, or
@@ -231,14 +260,8 @@ mesen-gdb game.sfc --headless --ram-init zeros < tests/camera.mgdb
 - **`<value>`** is decimal, hex with `0x` or `$`, negative (`-1` is all ones
   at the width), or a symbol: a constant's value or a label's address.
 
-A passing check prints `PASS`, a failing one `FAIL` with the line and the
-actual value, and the script goes on. At the end the session prints a count
-and exits with 0 if every check passed, 1 if one failed, or 2 if one could
-not be evaluated (an unknown symbol, say). With `--json`, an `expect` answers
+With `--json`, an `expect` answers
 `{"ok":true,"pass":false,"actual":90,"expected":91,"line":11}`.
-
-`#` starts a comment. Pin power-on RAM with `--ram-init zeros` so a script
-runs the same every time.
 
 ### Batch mode
 
@@ -336,6 +359,8 @@ Every call has a deadline, so a test can fail but never hang, and
 | `--dbg <file>` | cc65 `.dbg` symbols (default: the ROM's name with `.dbg`, or `main.dbg` beside it) |
 | `--json` | JSON output: batch results, or the JSON protocol at the prompt |
 | `--batch` | Batch mode (below) |
+| `--script <file>` | Run a file of debugger commands as a test ([Test scripts](#test-scripts)) |
+| `--timeout <ms>` | Batch mode: give up after this long. A script: the limit for each `run` and `rwatch`. Default 10000 |
 | `--dap` | DAP mode |
 | `--log-bus`, `--log-vram`, `--log-hdma` | Log SNES bus writes, VRAM writes or HDMA transfers to stdout |
 | `--help` | Show the usage |
@@ -344,7 +369,6 @@ Batch mode only:
 
 | Option | Meaning |
 |---|---|
-| `--timeout <ms>` | Give up after this long (default 10000) |
 | `--check-reg <R>=<V>` | Assert a register |
 | `--check-mem <A>=<V>` | Assert a byte |
 | `--check-mem16 <A>=<V>` | Assert a word |
