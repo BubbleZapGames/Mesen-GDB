@@ -102,6 +102,7 @@ private:
 	void CmdScreenshot(const std::string& filename);
 	void CmdRunUntil(const RegCondition& cond);
 	void CmdUntil(uint32_t addr, int maxFrames);
+	void CmdJump(const std::string& target);
 	void CmdWrite(uint32_t addr, const std::vector<uint8_t>& bytes);
 	void CmdSaveState(const std::string& filename);
 	void CmdLoadState(const std::string& filename);

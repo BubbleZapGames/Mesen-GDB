@@ -655,6 +655,48 @@ void DebuggerCli::CmdSet(uint32_t addr, uint8_t val)
 	printf("[$%06X] = $%02X\n", addr, val);
 }
 
+// CmdJump - point the PC at *addr* without running: the next step or run
+// starts there. A bare address of 16 bits or less (`jump 8100`) keeps the
+// current bank; a symbol or bank:addr sets it. Registers and the CPU's mode
+// flags are left as they are.
+//
+// The debugger only moves the PC between instructions. A `frames` run stops
+// at the frame's end, partway through one, so that instruction is finished
+// first with a one-instruction step.
+void DebuggerCli::CmdJump(const std::string& target)
+{
+	uint32_t addr = ParseAddress(target);
+	std::string name = target.substr(0, target.find('+'));
+	bool fullAddress = target.find(':') != std::string::npos || (_symbols && _symbols->Find(name));
+
+	auto trySet = [&]() {
+		DebuggerRequest req = _emu->GetDebugger(false);
+		Debugger* dbg = req.GetDebugger();
+		if(!dbg) return false;
+		if(!fullAddress && addr <= 0xFFFF) {
+			addr |= dbg->GetProgramCounter(_primaryCpu, true) & 0xFF0000;
+		}
+		dbg->SetProgramCounter(_primaryCpu, addr);
+		return dbg->GetProgramCounter(_primaryCpu, true) == addr;
+	};
+	if(!trySet()) {
+		_listener->Reset();
+		{
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(dbg) dbg->Step(_primaryCpu, 1, StepType::Step);
+		}
+		if(!WaitOrPause(5000) && Fail(StopReason())) return;
+		if(!trySet()) {
+			if(Fail("cannot set the PC")) return;
+			printf("Cannot set the PC.\n");
+			return;
+		}
+	}
+	if(_jsonOutput) { ReplyState("jump"); return; }
+	PrintState();
+}
+
 // CmdWrite - several bytes from *addr* in one command.
 void DebuggerCli::CmdWrite(uint32_t addr, const std::vector<uint8_t>& bytes)
 {
@@ -1111,13 +1153,14 @@ bool DebuggerCli::IsRegisterName(const std::string& name)
 }
 
 // ParseExpectValue - the right side of an `expect`: a number (decimal, or
-// hex with 0x or $), or a symbol - a constant's value or a label's address.
+// hex with 0x or $), or a symbol - a constant's value or a label's address -
+// optionally with a hex offset, as in an address: `camera_update+3`.
 uint32_t DebuggerCli::ParseExpectValue(const std::string& text)
 {
 	if(!text.empty() && (isalpha((unsigned char)text[0]) || text[0] == '_')) {
-		const CliSymbol* sym = _symbols ? _symbols->Find(text) : nullptr;
-		if(!sym) throw std::invalid_argument(NoSymbolMessage(text, _symbols));
-		return sym->addr;
+		std::string name = text.substr(0, text.find('+'));
+		if(!_symbols || !_symbols->Find(name)) throw std::invalid_argument(NoSymbolMessage(name, _symbols));
+		return ParseCliAddress(text, _symbols);
 	}
 	return ParseCliNumber(text);
 }
@@ -1312,6 +1355,7 @@ void DebuggerCli::CmdHelp()
 		"  frames <N>        Run N PPU frames\n"
 		"  until <addr> <N>  Run to <addr>, at most N frames\n"
 		"  write <addr> <hex> Write bytes (e.g. write 7E0010 0a0b0c)\n"
+		"  jump <addr>       Set the PC to an address or symbol, without running\n"
 		"  savestate <file>  Save a state (.mss)\n"
 		"  loadstate <file>  Load a state (.mss)\n"
 		"  movie <file>|stop Play a movie (.mmo) in this session, or stop it\n"
@@ -1531,6 +1575,9 @@ int DebuggerCli::Run()
 					bytes.push_back((uint8_t)std::stoul(hex.substr(i, 2), nullptr, 16));
 				}
 				CmdWrite(ParseAddress(tokens[1]), bytes);
+			} else if(cmd == "jump" || cmd == "j") {
+				if(tokens.size() < 2) { Usage("Usage: jump <addr>"); continue; }
+				CmdJump(tokens[1]);
 			} else if(cmd == "until") {
 				if(tokens.size() < 3) { Usage("Usage: until <addr> <max_frames>"); continue; }
 				CmdUntil(ParseAddress(tokens[1]), std::stoi(tokens[2]));

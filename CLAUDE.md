@@ -47,6 +47,10 @@ bin/linux-x64/Release/mesen-gdb --dap
 
 - `until <addr> <N>` — run to `<addr>`, at most N frames (bounded in emulated time).
 - `write <addr> <hex>` — several bytes at once (`write 7E0010 0a0b`).
+- `jump <addr>` (`j`) — set the PC (and K) to an address or symbol without running; a bare address
+  of 16 bits or less keeps the current bank. `Debugger::SetProgramCounter` only works between
+  instructions, and a `frames` run stops mid-instruction, so `CmdJump` steps one instruction first
+  when the first attempt does not take.
 - `savestate <file>` / `loadstate <file>` — Mesen `.mss` states.
 - `input <port> <buttons|number>` — hold buttons on a controller (1 = first) until the next
   `input`: a comma list of `a b x y l r select start up down left right`, `none`, or a raw
@@ -63,7 +67,7 @@ bin/linux-x64/Release/mesen-gdb --dap
   `expect units__x_px[3]:u16 > 0`, `expect PC == snapshot_point` (PC includes K), `expect vram 1000 == 0`.
   An `[index]` is decimal and scaled by the `:u8/:u16/:u24` width; a symbol of 1-3 bytes reads at its
   size, a bigger one needs an index and width. Values are decimal, `0x`/`$` hex, negative, or a symbol
-  (a constant's value). Prints PASS/FAIL (with the stdin line when scripted) and goes on; `Run()`
+  (a constant's value, or `name+off`). Prints PASS/FAIL (with the stdin line when scripted) and goes on; `Run()`
   returns 1 if any failed, 2 if one could not be evaluated, and `main` exits with it. JSON:
   `pass`, `actual`, `expected`, `line`.
 - `info symbols [text]` — symbols whose names contain *text*.
@@ -92,7 +96,7 @@ carries replies only. Replies are `{"ok":true,...}` or `{"ok":false,"error":"...
 
 | Command | Extra fields |
 |---|---|
-| `frames`, `step`, `next`, `finish`, `run`, `until`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (`step`, `break`, `until`, ...), `frame`, `pc`, `cpu` (registers); `frames`/`until` add `frames` run, `until` adds `hit` |
+| `frames`, `step`, `next`, `finish`, `run`, `until`, `jump`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (`step`, `break`, `until`, ...), `frame`, `pc`, `cpu` (registers); `frames`/`until` add `frames` run, `until` adds `hit` |
 | `mem`, `wram`/`vram`/... | `addr`, `hex` (lower-case byte string) |
 | `dump`, `screenshot`, `savestate` | `path`, `bytes` / `frame` |
 | `break`, `watch` | `id` |

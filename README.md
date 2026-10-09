@@ -69,6 +69,7 @@ constants and RAM the assembler never lists.
 | `run` | `c`, `continue` | Resume until a breakpoint |
 | `frames <N>` | | Run N video frames, then stop |
 | `until <addr> <N>` | | Run to `<addr>`, giving up after N frames |
+| `jump <addr>` | `j` | Set the PC to an address or symbol without running. A bare address of 16 bits or less keeps the current bank. Registers and mode flags are unchanged |
 | `rwatch <cond>` | `rw` | Run until a register condition holds: `A=$42`, `SP>$1FF`, `D!=0` (operators `= != < > <= >=`) |
 | `reset` | | Reset the console |
 
@@ -258,7 +259,8 @@ it.
   `expect vram 1000:u16 == 0`.
 - **`<op>`** is `==`, `!=`, `<`, `>`, `<=` or `>=`, compared unsigned.
 - **`<value>`** is decimal, hex with `0x` or `$`, negative (`-1` is all ones
-  at the width), or a symbol: a constant's value or a label's address.
+  at the width), or a symbol: a constant's value or a label's address, with an
+  optional hex offset (`camera_update+3`).
 
 With `--json`, an `expect` answers
 `{"ok":true,"pass":false,"actual":90,"expected":91,"line":11}`.
@@ -298,7 +300,7 @@ output such as `disasm`) goes to stderr, so stdout carries only replies.
 
 | Command | Extra reply fields |
 |---|---|
-| `frames`, `step`, `next`, `finish`, `run`, `until`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (why it stopped), `frame`, `pc` (a number), `cpu` (registers and flags, as hex strings); `frames` and `until` add `frames` run, and `until` adds `hit` |
+| `frames`, `step`, `next`, `finish`, `run`, `until`, `jump`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (why it stopped), `frame`, `pc` (a number), `cpu` (registers and flags, as hex strings); `frames` and `until` add `frames` run, and `until` adds `hit` |
 | `mem`, `wram`, `vram`, ... | `addr` (a number), `hex` (the bytes, lower-case) |
 | `expect` | `pass`, `actual`, `expected`, `line` |
 | `info symbols` | `symbols`: a list of `name`, `addr`, `size`, `const` |
