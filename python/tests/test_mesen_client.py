@@ -31,6 +31,9 @@ FAKE = textwrap.dedent('''\
             reply(stopped="step", frame=int(args[0]), pc=0x8001, frames=int(args[0]))
         elif cmd == "until":
             reply(stopped="step", frame=10, pc=0x8001, frames=10, hit=False)
+        elif cmd == "jump":
+            bank, addr = args[0].split(":")
+            reply(stopped="jump", frame=0, pc=int(bank, 16) << 16 | int(addr, 16))
         elif cmd == "write":
             a = int(args[0], 16)
             for i, b in enumerate(bytes.fromhex(args[1])):
@@ -85,6 +88,10 @@ def test_input_command(backend):
 
 def test_until_reports_miss(backend):
     assert backend.until(0x8123, 10).hit is False
+
+
+def test_jump_sends_the_bank(backend):
+    assert backend.jump(0x018000).pc == 0x018000
 
 
 def test_error_reply_raises(backend):

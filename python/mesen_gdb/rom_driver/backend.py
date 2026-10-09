@@ -56,6 +56,10 @@ class Backend(ABC):
     def until(self, addr: int, max_frames: int) -> Stop: ...
 
     @abstractmethod
+    def jump(self, addr: int) -> Stop:
+        """Set the PC to *addr* (24-bit) without running."""
+
+    @abstractmethod
     def read(self, addr: int, n: int) -> bytes: ...
 
     @abstractmethod

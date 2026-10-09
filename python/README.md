@@ -74,6 +74,7 @@ Every input method runs the emulator and returns the session, so calls chain.
 | `a(n)`, `start(n)`, ... | any button held n frames |
 | `press("l", "a", frames=3)` / `hold(...)` | several buttons together (no `frames`: a tap) |
 | `until(target, max_frames=600, holding=())` | run to a symbol or address, holding buttons meanwhile; `NotReached` if it is not hit in time |
+| `jump(target)` | set the PC to a symbol or address without running. Stopped at a function's entry, a jump to another function of the same signature swaps the call: `s.until("boot_mission", 2).jump("boot_harness")` |
 
 A session starts powered on, paused before the first frame, with power-on RAM
 pinned (zeros), so a run repeats exactly. Input is per frame, which is how the
@@ -185,7 +186,7 @@ Also: `s.save_state()`, `s.load_state(path)`, `s.screenshot(path)`,
 
 `Rom(path, backend=...)` takes an emulator's name or a callable returning a
 `Backend` (`mesen_gdb/rom_driver/backend.py`): `start`, `set_input(port, buttons)`,
-`frames`, `until`, `read`, `write`, `save_state`, `load_state`, `screenshot`,
+`frames`, `until`, `jump`, `read`, `write`, `save_state`, `load_state`, `screenshot`,
 `dump`, `close`. The unit tests drive the API through an in-memory one
 (`tests/fake_backend.py`).
 

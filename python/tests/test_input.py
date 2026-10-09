@@ -83,6 +83,13 @@ def test_until_hit_holding_and_release(s):
     assert calls(s) == [inp('select'), ('until', 0x8123, 600), inp()]
 
 
+def test_jump(s):
+    s.backend.hit_addr = 0x8123
+    s.until('main_loop').jump(0x9000)
+    assert [c for c in s.backend.calls if c[0] in ('until', 'jump')] == [('until', 0x8123, 600), ('jump', 0x9000)]
+    assert s.last.pc == 0x9000
+
+
 def test_until_miss(s):
     with pytest.raises(NotReached, match=r'main_loop \$008123 not reached in 30 frames'):
         s.until('main_loop', max_frames=30)

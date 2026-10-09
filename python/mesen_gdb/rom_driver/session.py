@@ -269,6 +269,16 @@ class Session:
                              f"(stopped at ${self.last.pc:06X}, frame {self.last.frame})")
         return self
 
+    def jump(self, target: Target) -> 'Session':
+        """Set the PC to *target* (a symbol or address) without running.
+
+        Stopped at a function's entry by `until`, a jump to another function
+        of the same signature swaps the call: it runs in its place and
+        returns to the same caller.
+        """
+        self.last = self.backend.jump(self.resolve(target))
+        return self
+
     # ---- memory -----------------------------------------------------------
 
     def resolve(self, target: Target) -> int:

@@ -40,6 +40,10 @@ class RecordingBackend(Backend):
         self.frame += ran
         return self._stop('until' if hit else 'step', frames=ran, hit=hit)
 
+    def jump(self, addr):
+        self.calls.append(('jump', addr))
+        return Stop(reason='jump', frame=self.frame, pc=addr)
+
     def read(self, addr, n):
         return bytes(self.mem[addr:addr + n])
 

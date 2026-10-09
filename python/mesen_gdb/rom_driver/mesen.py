@@ -183,6 +183,10 @@ class MesenBackend(Backend):
     def until(self, addr: int, max_frames: int) -> Stop:
         return self._stop(self._call(f'until {addr:06X} {max_frames}', self._run_timeout(max_frames)))
 
+    def jump(self, addr: int) -> Stop:
+        # bank:addr, so the bank is set rather than kept from the current PC.
+        return self._stop(self._call(f'jump {addr >> 16:02X}:{addr & 0xFFFF:04X}'))
+
     def read(self, addr: int, n: int) -> bytes:
         if n <= 0:
             return b''
