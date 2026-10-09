@@ -77,6 +77,14 @@ ends the session at once; SIGINT interrupts the command in progress. A headless 
 session re-asserts maximum speed before every run command — loading a ROM, a movie or a state
 resets the rewind manager, which clears it and would otherwise pace the session at 60 fps.
 
+### Python test driver (`python/`)
+
+`mesen_gdb.rom_driver` speaks this protocol so SNES ROM tests run as ordinary pytest tests: chainable
+live input, motions (`motion("D5R5dX5xr")`), memory by `.sym`/`.dbg` symbol name, named states cached
+as save states, and `snes`/`state` fixtures. Install with `pip install -e python`; its own tests run
+with `pytest python/tests`. Usage is in [python/README.md](python/README.md). A change to a JSON reply
+is a change to `python/mesen_gdb/rom_driver/mesen.py` too.
+
 ## Architecture
 
 ```

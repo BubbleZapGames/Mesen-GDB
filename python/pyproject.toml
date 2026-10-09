@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesen-gdb"
+version = "0.1.0"
+description = "Drive mesen-gdb from Python: SNES ROM tests as ordinary pytest tests"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-xdist"]
+
+# The snes/state fixtures, active once installed.
+[project.entry-points.pytest11]
+mesen_gdb_rom_driver = "mesen_gdb.rom_driver.pytest_plugin"
+
+[tool.setuptools.packages.find]
+include = ["mesen_gdb*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
