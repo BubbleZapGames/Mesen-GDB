@@ -2,6 +2,7 @@
 #include "debugger_cli.h"
 #include "cli_notification.h"
 #include "cli_input.h"
+#include "cli_symbols.h"
 #include "formatter.h"
 #include "console_info.h"
 #include "Shared/Emulator.h"
@@ -78,24 +79,11 @@ std::vector<std::string> DebuggerCli::Tokenize(const std::string& line)
 	return tokens;
 }
 
-uint32_t DebuggerCli::ParseAddress(const std::string& str)
+// ParseAddress - an address or a symbol (see ParseCliAddress); *size*, when
+// given, receives a bare symbol's size.
+uint32_t DebuggerCli::ParseAddress(const std::string& str, uint32_t* size)
 {
-	// Accept formats: 0x1234, $1234, 1234 (hex), 00:8000 (bank:addr)
-	std::string s = str;
-
-	// bank:addr format
-	size_t colon = s.find(':');
-	if(colon != std::string::npos) {
-		uint32_t bank = std::stoul(s.substr(0, colon), nullptr, 16);
-		uint32_t addr = std::stoul(s.substr(colon + 1), nullptr, 16);
-		return (bank << 16) | (addr & 0xFFFF);
-	}
-
-	// Strip prefix
-	if(s.size() > 1 && s[0] == '$') s = s.substr(1);
-	else if(s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s = s.substr(2);
-
-	return std::stoul(s, nullptr, 16);
+	return ParseCliAddress(str, _symbols, size);
 }
 
 void DebuggerCli::SyncBreakpoints(int64_t extraAddr)
@@ -1054,6 +1042,201 @@ void DebuggerCli::CmdInput(int port, const std::string& buttons)
 	printf("Port %d: %s\n", port, text.c_str());
 }
 
+// CmdInfoSymbols - list the symbols whose names contain *text* (all of them
+// for an empty one): address, size, name.
+void DebuggerCli::CmdInfoSymbols(const std::string& text)
+{
+	std::vector<const CliSymbol*> found;
+	if(_symbols) found = _symbols->Matching(text);
+	if(_jsonOutput) {
+		std::string list;
+		for(const CliSymbol* s : found) {
+			if(!list.empty()) list += ",";
+			list += "{\"name\":\"" + JsonEscape(s->name) + "\",\"addr\":" + std::to_string(s->addr) +
+				",\"size\":" + std::to_string(s->size) + ",\"const\":" + (s->isConst ? "true" : "false") + "}";
+		}
+		ReplyOk("\"symbols\":[" + list + "]");
+		return;
+	}
+	if(!_symbols || _symbols->Count() == 0) { printf("No symbols loaded.\n"); return; }
+	for(const CliSymbol* s : found) {
+		if(s->isConst) {
+			printf("  const  $%-6X        %s\n", s->addr, s->name.c_str());
+		} else {
+			std::string size = s->size ? std::to_string(s->size) : "?";
+			printf("  %02X:%04X %6s bytes  %s\n", s->addr >> 16, s->addr & 0xFFFF, size.c_str(), s->name.c_str());
+		}
+	}
+	printf("%zu symbol%s\n", found.size(), found.size() == 1 ? "" : "s");
+}
+
+bool DebuggerCli::IsRegisterName(const std::string& name)
+{
+	if(_primaryCpu != CpuType::Snes && _primaryCpu != CpuType::Sa1) return false;
+	static const char* names[] = { "A", "X", "Y", "SP", "S", "D", "DBR", "PS", "PC", "K" };
+	for(const char* n : names) {
+		if(name.size() != strlen(n)) continue;
+		bool same = true;
+		for(size_t i = 0; i < name.size(); i++) same = same && toupper(name[i]) == n[i];
+		if(same) return true;
+	}
+	return false;
+}
+
+// ParseExpectValue - the right side of an `expect`: a number (decimal, or
+// hex with 0x or $), or a symbol - a constant's value or a label's address.
+uint32_t DebuggerCli::ParseExpectValue(const std::string& text)
+{
+	if(!text.empty() && (isalpha((unsigned char)text[0]) || text[0] == '_')) {
+		const CliSymbol* sym = _symbols ? _symbols->Find(text) : nullptr;
+		if(!sym) throw std::invalid_argument(NoSymbolMessage(text, _symbols));
+		return sym->addr;
+	}
+	return ParseCliNumber(text);
+}
+
+// CmdExpect - `expect <what> <op> <value>`: check one value and report it.
+// <what> is a register, or memory: an address or symbol with an optional
+// [index] (decimal) and :u8/:u16/:u24 width, or `<region> <addr>` for a
+// memory region. A failure is reported and counted and the session goes on;
+// Run() then exits 1 (2 if an expect could not be evaluated at all).
+void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::string& line)
+{
+	std::string expr = line.substr(line.find("expect") + 6);
+	expr = expr.substr(std::min(expr.size(), expr.find_first_not_of(" \t")));
+	std::string where = _scripted ? "line " + std::to_string(_lineNo) + ": " : "";
+
+	uint32_t actual = 0;
+	uint32_t expected = 0;
+	int bytes = 0;
+	bool pass = false;
+	try {
+		std::vector<std::string> args(tokens.begin() + 1, tokens.end());
+		int memType = -1;   // the CPU's address space
+		if(args.size() == 4) {
+			for(auto& r : ConsoleInfo::GetMemoryRegions(_consoleType)) {
+				if(args[0] == r.shortName) { memType = (int)r.type; break; }
+			}
+			if(memType < 0) throw std::invalid_argument("unknown memory region '" + args[0] + "'");
+			args.erase(args.begin());
+		}
+		if(args.size() != 3) throw std::invalid_argument("usage: expect <what> <op> <value>");
+
+		static const struct { const char* text; RegCondOp op; } ops[] = {
+			{ "==", RegCondOp::Eq }, { "=", RegCondOp::Eq }, { "!=", RegCondOp::Ne },
+			{ "<", RegCondOp::Lt }, { ">", RegCondOp::Gt }, { "<=", RegCondOp::Le }, { ">=", RegCondOp::Ge },
+		};
+		int op = -1;
+		for(int i = 0; i < 7; i++) if(args[1] == ops[i].text) op = i;
+		if(op < 0) throw std::invalid_argument("unknown operator '" + args[1] + "' (== != < > <= >=)");
+
+		std::string what = args[0];
+		if(memType < 0 && IsRegisterName(what)) {
+			uint8_t stateBuffer[512] = {};
+			BaseState& state = *reinterpret_cast<BaseState*>(stateBuffer);
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(!dbg) throw std::runtime_error("no debugger");
+			dbg->GetCpuState(state, _primaryCpu);
+			actual = GetRegisterValue(what, stateBuffer);
+			bytes = 2;
+			if(toupper(what[0]) == 'P' && toupper(what[1]) == 'C') {
+				// PC compares with its bank, so it can match a label.
+				actual |= (uint32_t)GetRegisterValue("K", stateBuffer) << 16;
+				bytes = 3;
+			}
+		} else {
+			// Width suffix, then index: units__x_px[3]:u16
+			static const struct { const char* text; int bytes; } widths[] = { { ":u8", 1 }, { ":u16", 2 }, { ":u24", 3 } };
+			for(auto& w : widths) {
+				size_t n = strlen(w.text);
+				if(what.size() > n && what.compare(what.size() - n, n, w.text) == 0) {
+					bytes = w.bytes;
+					what = what.substr(0, what.size() - n);
+					break;
+				}
+			}
+			uint32_t index = 0;
+			bool indexed = false;
+			if(!what.empty() && what.back() == ']') {
+				size_t open = what.find('[');
+				if(open == std::string::npos || open == 0) throw std::invalid_argument("bad index in '" + args[0] + "'");
+				index = ParseCliNumber(what.substr(open + 1, what.size() - open - 2));
+				what = what.substr(0, open);
+				indexed = true;
+			}
+
+			uint32_t symSize = 0;
+			uint32_t addr;
+			if(memType >= 0) {
+				addr = ParseCliAddress(what, nullptr);
+			} else {
+				const CliSymbol* sym = _symbols ? _symbols->Find(what) : nullptr;
+				if(sym && sym->isConst) throw std::invalid_argument(what + " is a constant, not memory");
+				addr = ParseAddress(what, &symSize);
+			}
+			if(!bytes) {
+				if(indexed) {
+					throw std::invalid_argument("give the element width: " + what + "[" +
+						std::to_string(index) + "]:u8 or :u16");
+				}
+				if(symSize > 3) {
+					throw std::invalid_argument(what + " is " + std::to_string(symSize) +
+						" bytes: give an index and width, e.g. " + what + "[0]:u8");
+				}
+				bytes = symSize ? (int)symSize : 1;
+			}
+			addr += index * (uint32_t)bytes;
+
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			if(!dbg) throw std::runtime_error("no debugger");
+			MemoryType type = memType >= 0 ? (MemoryType)memType : ConsoleInfo::GetCpuMemoryType(_primaryCpu);
+			if(memType >= 0 && addr + bytes > dbg->GetMemoryDumper()->GetMemorySize(type)) {
+				throw std::invalid_argument("address out of range");
+			}
+			for(int i = 0; i < bytes; i++) {
+				actual |= (uint32_t)dbg->GetMemoryDumper()->GetMemoryValue(type, addr + i) << (8 * i);
+			}
+		}
+
+		uint32_t max = bytes == 1 ? 0xFF : bytes == 2 ? 0xFFFF : 0xFFFFFF;
+		std::string valueText = args[2];
+		bool negative = valueText.size() > 1 && valueText[0] == '-';
+		expected = ParseExpectValue(negative ? valueText.substr(1) : valueText);
+		if(expected > max) {
+			throw std::invalid_argument(valueText + " does not fit in " + std::to_string(bytes * 8) + " bits");
+		}
+		if(negative) expected = (max + 1 - expected) & max;
+
+		switch(ops[op].op) {
+			case RegCondOp::Eq: pass = actual == expected; break;
+			case RegCondOp::Ne: pass = actual != expected; break;
+			case RegCondOp::Lt: pass = actual < expected; break;
+			case RegCondOp::Gt: pass = actual > expected; break;
+			case RegCondOp::Le: pass = actual <= expected; break;
+			case RegCondOp::Ge: pass = actual >= expected; break;
+		}
+	} catch(const std::exception& e) {
+		_expectErrors++;
+		if(_jsonOutput) { ReplyError(e.what()); return; }
+		printf("ERROR %s%s: %s\n", where.c_str(), expr.c_str(), e.what());
+		return;
+	}
+
+	(pass ? _expectPassed : _expectFailed)++;
+	if(_jsonOutput) {
+		ReplyOk(std::string("\"pass\":") + (pass ? "true" : "false") + ",\"actual\":" + std::to_string(actual) +
+			",\"expected\":" + std::to_string(expected) + ",\"line\":" + std::to_string(_lineNo));
+		return;
+	}
+	if(pass) {
+		printf("PASS  %s\n", expr.c_str());
+	} else {
+		printf("FAIL  %s%s: actual $%0*X (%u)\n", where.c_str(), expr.c_str(), bytes * 2, actual, actual);
+	}
+}
+
 void DebuggerCli::CmdHelp()
 {
 	std::cout <<
@@ -1105,6 +1288,11 @@ void DebuggerCli::CmdHelp()
 		"  input <port> <b,..> Hold buttons on a controller (1 = first) until changed;\n"
 		"                    a b x y l r select start up down left right, none, or\n"
 		"                    a raw $4218 word: input 1 0x8000 (B), input 1 128 (A)\n"
+		"  expect <what> <op> <value>  Check a value; a failure is reported and the\n"
+		"                    session exits 1. <what> is a register, an address or\n"
+		"                    symbol with [index] and :u8/:u16/:u24, or <region> <addr>.\n"
+		"                    Ops == != < > <= >=; values decimal, 0x/$ hex or a symbol\n"
+		"  info symbols [text] List symbols whose names contain text\n"
 		"  reset             Reset emulator\n"
 		"  rwatch <cond>     Run until register condition is true\n"
 		"                    Examples: SP>$1FF, D!=0, A=$42, S<$100\n"
@@ -1112,7 +1300,7 @@ void DebuggerCli::CmdHelp()
 		"  help              Show this help\n"
 		"  quit              Exit debugger\n"
 		"\n"
-		"Address formats: $1234, 0x1234, 1234, 00:8000\n";
+		"Address formats: $1234, 0x1234, 1234, 00:8000, or a symbol (name, name+off)\n";
 }
 
 // ReadLine - the next line of stdin, read from the descriptor directly.
@@ -1154,9 +1342,10 @@ bool DebuggerCli::ReadLine(std::string& line)
 	}
 }
 
-void DebuggerCli::Run()
+int DebuggerCli::Run()
 {
 	SyncBreakpoints();
+	_scripted = !isatty(STDIN_FILENO);
 
 	if(_jsonOutput) {
 		// Keep the real stdout for replies; everything else that writes to
@@ -1186,6 +1375,18 @@ void DebuggerCli::Run()
 		if(!_jsonOutput) std::cout << "(mesen) " << std::flush;
 
 		if(!ReadLine(line)) break;
+		_lineNo++;
+
+		// '#' starts a comment, at the start of a line or after a space; a
+		// line with nothing else is skipped (not a repeat of the last command).
+		for(size_t i = 0; i < line.size(); i++) {
+			if(line[i] == '#' && (i == 0 || isspace((unsigned char)line[i - 1]))) {
+				line.erase(i);
+				if(line.find_first_not_of(" \t\r") == std::string::npos) line = "#";
+				break;
+			}
+		}
+		if(line == "#") continue;
 
 		if(line.empty()) {
 			// Repeating the last command is for a person at the prompt; a
@@ -1228,15 +1429,18 @@ void DebuggerCli::Run()
 					CmdInfoRegions();
 				} else if(tokens.size() > 1 && tokens[1] == "cpu") {
 					CmdInfoCpu();
+				} else if(tokens.size() > 1 && (tokens[1] == "symbols" || tokens[1] == "sym")) {
+					CmdInfoSymbols(tokens.size() > 2 ? tokens[2] : "");
 				} else {
-					Usage("Usage: info break|regions|cpu");
+					Usage("Usage: info break|regions|cpu|symbols [text]");
 				}
 			} else if(cmd == "regs" || cmd == "r") {
 				CmdRegs();
 			} else if(cmd == "mem" || cmd == "x") {
 				if(tokens.size() < 2) { Usage("Usage: mem <addr> [len]"); continue; }
-				uint32_t addr = ParseAddress(tokens[1]);
-				uint32_t len = (tokens.size() > 2) ? std::stoul(tokens[2]) : 256;
+				uint32_t symSize = 0;
+				uint32_t addr = ParseAddress(tokens[1], &symSize);
+				uint32_t len = (tokens.size() > 2) ? std::stoul(tokens[2]) : (symSize ? symSize : 256);
 				CmdMem(addr, len);
 			} else if(cmd == "dump") {
 				if(tokens.size() < 3) {
@@ -1306,6 +1510,8 @@ void DebuggerCli::Run()
 			} else if(cmd == "input") {
 				if(tokens.size() < 3) { Usage("Usage: input <port> <button,...|none|number>"); continue; }
 				CmdInput(std::stoi(tokens[1]), tokens[2]);
+			} else if(cmd == "expect") {
+				CmdExpect(tokens, line);
 			} else if(cmd == "movie") {
 				if(tokens.size() < 2) { Usage("Usage: movie <file.mmo>|stop"); continue; }
 				CmdMovie(tokens[1]);
@@ -1342,4 +1548,12 @@ void DebuggerCli::Run()
 		if(_jsonOutput && !_replied) ReplyOk();
 	}
 	if(_out) fflush(_out);
+
+	int expects = _expectPassed + _expectFailed + _expectErrors;
+	if(expects > 0 && !_jsonOutput) {
+		printf("expect: %d passed, %d failed", _expectPassed, _expectFailed);
+		if(_expectErrors) printf(", %d could not be evaluated", _expectErrors);
+		printf("\n");
+	}
+	return _expectErrors ? 2 : _expectFailed ? 1 : 0;
 }

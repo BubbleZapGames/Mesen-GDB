@@ -29,6 +29,7 @@
 #include "cli_notification.h"
 #include "cli_input.h"
 #include "debugger_cli.h"
+#include "cli_symbols.h"
 #include "batch_runner.h"
 #include "console_info.h"
 #include "bus_logging.h"
@@ -65,7 +66,10 @@ struct CliArgs {
 	bool jsonOutput = false;
 	bool headless = false;
 	int timeoutMs = 10000;
+	std::vector<std::string> breakSpecs;      // addresses or symbols, resolved after loading symbols
 	std::vector<uint32_t> breakAddresses;
+	std::string symPath;   // --sym / --dbg; otherwise found beside the ROM
+	std::string dbgPath;
 	std::vector<BatchAssertion> assertions;
 	std::vector<MemoryDump> dumps;
 	std::string screenshotFile;
@@ -109,7 +113,7 @@ static void PrintUsage(const char* prog)
 		"  --json                  JSON output: batch registers, or in the CLI one\n"
 		"                          JSON reply line per command (see CLAUDE.md)\n"
 		"  --headless              No SDL window or audio (max speed)\n"
-		"  --break <addr>          Set initial breakpoint (hex, repeatable)\n"
+		"  --break <addr>          Set initial breakpoint (hex or symbol, repeatable)\n"
 		"  --timeout <ms>          Batch timeout (default 10000)\n"
 		"  --check-reg <R>=<V>     Assert register (batch)\n"
 		"  --check-mem <A>=<V>     Assert memory byte (batch)\n"
@@ -119,12 +123,15 @@ static void PrintUsage(const char* prog)
 		"  --movie <file.mmo>      Play a Mesen movie file (.mmo)\n"
 		"  --turbo                 Run at maximum speed (no frame limiter)\n"
 		"  --ram-init <s>          Power-on RAM: zeros, ones or random (SNES)\n"
+		"  --sym <file>            WLA-DX symbols (default: the ROM's name with .sym)\n"
+		"  --dbg <file>            cc65 .dbg symbols (default: the ROM's name with\n"
+		"                          .dbg, or main.dbg beside it)\n"
 		"  --log-bus               Log SNES bus writes to stdout\n"
 		"  --log-vram              Log SNES VRAM writes to stdout\n"
 		"  --log-hdma              Log SNES HDMA transfers to stdout\n"
 		"  --help                  Show this help\n"
 		"\n"
-		"Address formats: $1234, 0x1234, 1234, 00:8000\n"
+		"Address formats: $1234, 0x1234, 1234, 00:8000, or a symbol (name, name+off)\n"
 		"\n"
 		"Examples:\n"
 		"  %s game.nes                          Interactive NES debugger\n"
@@ -158,7 +165,7 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 		} else if(arg == "--log-hdma") {
 			args.logHdma = true;
 		} else if(arg == "--break" && i + 1 < argc) {
-			args.breakAddresses.push_back(ParseAddr(argv[++i]));
+			args.breakSpecs.push_back(argv[++i]);
 		} else if(arg == "--timeout" && i + 1 < argc) {
 			args.timeoutMs = std::stoi(argv[++i]);
 		} else if(arg == "--check-reg" && i + 1 < argc) {
@@ -183,7 +190,7 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			}
 			BatchAssertion a;
 			a.type = BatchAssertion::Type::Mem;
-			a.address = ParseAddr(s.substr(0, eq));
+			a.name = s.substr(0, eq);   // resolved after loading symbols
 			a.expected = (uint16_t)ParseAddr(s.substr(eq + 1));
 			a.size = (arg == "--check-mem16") ? (uint8_t)2 : (uint8_t)1;
 			args.assertions.push_back(a);
@@ -202,6 +209,10 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 				fprintf(stderr, "Invalid --ram-init %s (zeros, ones or random)\n", args.ramInit.c_str());
 				return false;
 			}
+		} else if(arg == "--sym" && i + 1 < argc) {
+			args.symPath = argv[++i];
+		} else if(arg == "--dbg" && i + 1 < argc) {
+			args.dbgPath = argv[++i];
 		} else if(arg == "--turbo") {
 			args.turbo = true;
 		} else if(arg[0] == '-') {
@@ -330,6 +341,32 @@ static int RunDapMode(CliArgs& args)
 // --- CLI/Batch mode ---
 static int RunCliMode(CliArgs& args)
 {
+	// Symbols, so an address anywhere - these options, the CLI's commands -
+	// can be a name.
+	CliSymbols symbols;
+	std::string symPath = args.symPath.empty() ? CliSymbols::FindSymFile(args.romPath) : args.symPath;
+	std::string dbgPath = args.dbgPath.empty() ? CliSymbols::FindDbgFile(args.romPath) : args.dbgPath;
+	if(!symbols.Load(symPath, dbgPath)) {
+		fprintf(stderr, "Cannot read symbols: %s %s\n", symPath.c_str(), dbgPath.c_str());
+		return 2;
+	}
+	if(symbols.Count() > 0) {
+		std::string from = symPath;
+		if(!dbgPath.empty()) from += (from.empty() ? "" : ", ") + dbgPath;
+		fprintf(stderr, "[Symbols] %zu from %s\n", symbols.Count(), from.c_str());
+	}
+	try {
+		for(auto& spec : args.breakSpecs) {
+			args.breakAddresses.push_back(ParseCliAddress(spec, &symbols));
+		}
+		for(auto& a : args.assertions) {
+			if(a.type == BatchAssertion::Type::Mem) a.address = ParseCliAddress(a.name, &symbols);
+		}
+	} catch(const std::exception& e) {
+		fprintf(stderr, "Error: %s\n", e.what());
+		return 2;
+	}
+
 	// A JSON CLI session owns stdout for its replies: point fd 1 at stderr
 	// before the emulator exists, so the ROM-load log cannot precede the
 	// first reply.
@@ -590,7 +627,8 @@ static int RunCliMode(CliArgs& args)
 		for(auto addr : args.breakAddresses) {
 			cli.AddInitialBreakpoint(addr);
 		}
-		cli.Run();
+		cli.SetSymbols(&symbols);
+		exitCode = cli.Run();
 	}
 
 	// 11. Teardown

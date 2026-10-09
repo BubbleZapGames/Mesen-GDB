@@ -55,8 +55,22 @@ bin/linux-x64/Release/mesen-gdb --dap
   debugger: a debugger call made while the emulation thread is still leaving
   `Emulator::WaitForLock` deadlocks both threads (`DebuggerCli::WaitUntilStopped`).
 
-Addresses are hex; `mem`'s length is decimal. `--ram-init zeros|ones|random` pins SNES
-power-on RAM (otherwise random), so a session repeats exactly.
+- `expect <what> <op> <value>` — check a register or memory value: `expect camera_x == 0x5A`,
+  `expect units__x_px[3]:u16 > 0`, `expect PC == snapshot_point` (PC includes K), `expect vram 1000 == 0`.
+  An `[index]` is decimal and scaled by the `:u8/:u16/:u24` width; a symbol of 1-3 bytes reads at its
+  size, a bigger one needs an index and width. Values are decimal, `0x`/`$` hex, negative, or a symbol
+  (a constant's value). Prints PASS/FAIL (with the stdin line when scripted) and goes on; `Run()`
+  returns 1 if any failed, 2 if one could not be evaluated, and `main` exits with it. JSON:
+  `pass`, `actual`, `expected`, `line`.
+- `info symbols [text]` — symbols whose names contain *text*.
+
+Addresses are hex (`$1234`, `0x1234`, `1234`, `00:8000`) or a symbol, optionally `name+off` (hex).
+`GDB/cli_symbols.*` loads them - the ROM's `.sym` and its `.dbg` (or `main.dbg`), or `--sym`/`--dbg` -
+with the rules of `python/mesen_gdb/rom_driver/symbols.py` (`.sym` wins an address clash); keep the two
+in step. A bare word is a symbol if one has that name, else hex. `--break` and `--check-mem*` take
+symbols too. `mem <symbol>` defaults to the symbol's size; other lengths are decimal. `#` starts a
+comment. `--ram-init zeros|ones|random` pins SNES power-on RAM (otherwise random), so a session
+repeats exactly.
 
 ### JSON protocol (`--json` without `--batch`)
 
@@ -99,6 +113,7 @@ GDB/               The custom code in this fork (~1900 lines, 9 files)
   DapMain.cpp      Entry point, CLI arg parsing, emulator initialization
   batch_runner.*   Non-interactive test runner with register/memory assertions
   debugger_cli.*   Interactive GDB-style REPL
+  cli_symbols.*    .sym/.dbg symbols and address parsing for the CLI and its options
   formatter.*      Human-readable and JSON output formatting
   cli_notification.h   Notification listener bridging emulator events to CLI
   console_info.h   Console/CPU type detection and memory region mapping
@@ -129,7 +144,8 @@ The GDB/ directory is where nearly all development happens. Core/ is treated as 
 
 ## Testing
 
-No unit test framework. Testing is done via the batch runner against compiled ROMs:
+`make test` builds and runs `bin/dap-test` (`GDB/test_*.cpp`: the DAP, the `.dbg` parser, the CLI's
+symbols). Beyond that, testing is done via the batch runner against compiled ROMs:
 
 ```bash
 # Example: run ROM, break at $8100, verify A register equals 0x42

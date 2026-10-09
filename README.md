@@ -7,13 +7,15 @@ emulation core of [Mesen2](https://github.com/SourMesen/Mesen2). One program,
 - **A developer-focused minimal GUI.** Mesen's full GUI is scaled down for
   testing the game as you build it; it also runs in a headless CLI mode.
 - **A command-line debugger.** A GDB-style prompt for stepping, breakpoints,
-  watchpoints, memory, save states and live controller input.
+  watchpoints, memory, save states and live controller input, with the
+  build's symbol names.
 - **A DAP debugger.** A Debug Adapter Protocol server, so VS Code (or any DAP
   client) can debug a ROM at the source line, using the compiler's `.dbg`
   symbols.
-- **A unit-testing framework.** A batch mode that checks registers and memory
-  for scripts and CI, a JSON protocol for programs to drive, and a Python
-  package (`python/`) that runs ROM tests as ordinary pytest tests.
+- **A unit-testing framework.** Test scripts of debugger commands with
+  `expect` checks, a batch mode that checks registers and memory for CI, a
+  JSON protocol for programs to drive, and a Python package (`python/`) that
+  runs ROM tests as ordinary pytest tests.
 
 It emulates every system Mesen2 does: NES, SNES, Game Boy, Game Boy Advance, PC
 Engine, SMS/Game Gear and WonderSwan. It was made for SNES development with the
@@ -45,8 +47,15 @@ The ROM loads paused. Commands are typed one per line, so a script can also
 be piped into stdin:
 
 ```bash
-printf 'break 8100\nrun\nregs\nmem 7E0010 16\nquit\n' | mesen-gdb game.sfc --headless
+printf 'break main\nrun\nregs\nmem heli_x_px\nquit\n' | mesen-gdb game.sfc --headless
 ```
+
+**Symbols.** If the build left a WLA-DX `.sym` file beside the ROM (its name
+with `.sym`) or a cc65-format `.dbg` (its name with `.dbg`, or `main.dbg`
+beside it), every address can be a name: `break main`, `mem heli_x_px`,
+`until snapshot_point 600`. `--sym` and `--dbg` name the files instead. When
+both files know a name, the `.sym` address wins; the `.dbg` adds sizes,
+constants and RAM the assembler never lists.
 
 ### Commands
 
@@ -71,6 +80,7 @@ printf 'break 8100\nrun\nregs\nmem 7E0010 16\nquit\n' | mesen-gdb game.sfc --hea
 | `watch <addr>` | | Break when `<addr>` is written |
 | `delete <id>` | `del` | Remove a breakpoint or watchpoint |
 | `info break` | | List breakpoints and watchpoints |
+| `info symbols [text]` | `info sym` | List the symbols whose names contain `text`, with address and size |
 
 **State**
 
@@ -91,6 +101,7 @@ printf 'break 8100\nrun\nregs\nmem 7E0010 16\nquit\n' | mesen-gdb game.sfc --hea
 | `set <addr> <val>` | | Write one byte |
 | `write <addr> <hex>` | | Write several bytes: `write 7E0010 0a0b0c` |
 | `dump <region> <file>` | | Save a whole memory region to a file |
+| `expect <what> <op> <value>` | | Check a register or memory value (see [Test scripts](#test-scripts)) |
 
 **Capture and replay**
 
@@ -113,7 +124,10 @@ printf 'break 8100\nrun\nregs\nmem 7E0010 16\nquit\n' | mesen-gdb game.sfc --hea
 | `quit` | `q`, `exit` | Exit |
 
 **Addresses** are hex in any of these forms: `$1234`, `0x1234`, `1234`, or
-`00:8000` (bank:address). A `mem` or region length is decimal.
+`00:8000` (bank:address), or a symbol: `heli_x_px`, or `units__hp+3` with a
+hex offset. A bare word is the symbol when one has that name, and hex
+otherwise; `$` or `0x` always means a number. A `mem` or region length is
+decimal, and `mem <symbol>` with no length shows the symbol's size.
 
 **Memory regions** depend on the console; `info regions` lists them. On a SNES
 they are `wram`, `vram`, `cgram`, `oam`, `rom` and `sram`. Other consoles add
@@ -181,6 +195,51 @@ own thread.
 
 ## Testing ROMs
 
+### Test scripts
+
+A test can be a plain file of debugger commands with `expect` checks:
+
+```
+# tests/camera.mgdb: the camera follows the airframe right.
+input 1 x
+frames 30
+input 1 none
+frames 20
+input 1 right
+frames 30
+input 1 select
+until snapshot_point 20
+expect PC == snapshot_point
+expect camera_x == 0x005A
+expect units__hp[3]:u8 > 0
+quit
+```
+
+```bash
+mesen-gdb game.sfc --headless --ram-init zeros < tests/camera.mgdb
+```
+
+`expect <what> <op> <value>` checks one value:
+- **`<what>`** is a register (`A`, `X`, `Y`, `SP`, `D`, `DBR`, `PS`, `K`, or
+  `PC`, which includes its bank), or memory: an address or symbol with an
+  optional `[index]` and width `:u8`, `:u16` or `:u24`. A symbol of 1-3 bytes
+  is read at its size, and anything else as one byte unless a width is given;
+  an array needs both, as in `units__x_px[3]:u16` (the index is decimal and
+  scaled by the width). `<region> <addr>` reads a memory region instead:
+  `expect vram 1000:u16 == 0`.
+- **`<op>`** is `==`, `!=`, `<`, `>`, `<=` or `>=`, compared unsigned.
+- **`<value>`** is decimal, hex with `0x` or `$`, negative (`-1` is all ones
+  at the width), or a symbol: a constant's value or a label's address.
+
+A passing check prints `PASS`, a failing one `FAIL` with the line and the
+actual value, and the script goes on. At the end the session prints a count
+and exits with 0 if every check passed, 1 if one failed, or 2 if one could
+not be evaluated (an unknown symbol, say). With `--json`, an `expect` answers
+`{"ok":true,"pass":false,"actual":90,"expected":91,"line":11}`.
+
+`#` starts a comment. Pin power-on RAM with `--ram-init zeros` so a script
+runs the same every time.
+
 ### Batch mode
 
 Batch mode runs to a breakpoint, checks state, and exits with a status: 0 if
@@ -191,6 +250,9 @@ mesen-gdb game.sfc --batch --headless --break 8100 \
     --check-reg A=0x42 --check-mem 7E0010=0xFF --check-mem16 7E0020=0x1234 \
     --timeout 5000
 ```
+
+`--break` and the `--check-mem` addresses take symbols too:
+`--break main --check-mem16 heli_x_px=0x40`.
 
 Add `--movie input.mmo` to drive the controller, `--screenshot shot.png` or
 `--dump vram vram.bin` to capture what it reached, and `--json` for
@@ -215,6 +277,8 @@ output such as `disasm`) goes to stderr, so stdout carries only replies.
 |---|---|
 | `frames`, `step`, `next`, `finish`, `run`, `until`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (why it stopped), `frame`, `pc` (a number), `cpu` (registers and flags, as hex strings); `frames` and `until` add `frames` run, and `until` adds `hit` |
 | `mem`, `wram`, `vram`, ... | `addr` (a number), `hex` (the bytes, lower-case) |
+| `expect` | `pass`, `actual`, `expected`, `line` |
+| `info symbols` | `symbols`: a list of `name`, `addr`, `size`, `const` |
 | `dump`, `screenshot`, `savestate` | `path`, plus `bytes` or `frame` |
 | `break`, `watch` | `id` |
 
@@ -265,9 +329,11 @@ Every call has a deadline, so a test can fail but never hang, and
 |---|---|
 | `--headless` | No window or audio; runs at maximum speed |
 | `--turbo` | Maximum speed with the window |
-| `--break <addr>` | Set a breakpoint before starting (repeatable) |
+| `--break <addr>` | Set a breakpoint before starting (an address or symbol; repeatable) |
 | `--movie <file.mmo>` | Play a Mesen movie from power-on |
 | `--ram-init zeros\|ones\|random` | SNES power-on RAM contents |
+| `--sym <file>` | WLA-DX symbols (default: the ROM's name with `.sym`) |
+| `--dbg <file>` | cc65 `.dbg` symbols (default: the ROM's name with `.dbg`, or `main.dbg` beside it) |
 | `--json` | JSON output: batch results, or the JSON protocol at the prompt |
 | `--batch` | Batch mode (below) |
 | `--dap` | DAP mode |

@@ -192,12 +192,12 @@ $(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) 
 
 # Unit tests — only links DAP .cpp files (no emulator core needed)
 TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp \
-           GDB/test_cpu_serializer.cpp
+           GDB/test_cpu_serializer.cpp GDB/test_cli_symbols.cpp
 TESTOBJ := $(TESTSRC:.cpp=.o)
 DAPTESTOBJ := Core/Debugger/DAP/DapJson.o Core/Debugger/DAP/DapMessageReader.o \
               Core/Debugger/DAP/DapMessageWriter.o Core/Debugger/DAP/DbgFileParser.o \
               Core/Debugger/DAP/SourceMapper.o Core/Debugger/DAP/CpuStateSerializer.o \
-              Utilities/SimpleLock.o Utilities/Timer.o
+              Utilities/SimpleLock.o Utilities/Timer.o GDB/cli_symbols.o
 
 test: $(TESTOBJ) $(DAPTESTOBJ)
 	$(CXX) $(CXXFLAGS) -o bin/dap-test $(TESTOBJ) $(DAPTESTOBJ) -pthread $(FSLIB)
