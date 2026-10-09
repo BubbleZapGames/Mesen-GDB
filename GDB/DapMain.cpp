@@ -27,6 +27,7 @@
 #include "Core/Shared/Movies/MovieManager.h"
 
 #include "cli_notification.h"
+#include "cli_input.h"
 #include "debugger_cli.h"
 #include "batch_runner.h"
 #include "console_info.h"
@@ -45,12 +46,15 @@
 static std::atomic<bool> g_running{true};
 static std::shared_ptr<CliNotificationListener> g_listener;
 
-static void signalHandler(int)
+// SIGINT interrupts the command in progress (a person at the prompt);
+// SIGTERM ends the session, so a client can always stop the process.
+static void signalHandler(int sig)
 {
 	g_running = false;
 	auto listener = g_listener;
 	if(listener) {
-		listener->Interrupt();
+		if(sig == SIGTERM) listener->RequestQuit();
+		else listener->Interrupt();
 	}
 }
 
@@ -70,6 +74,7 @@ struct CliArgs {
 	bool logVram = false;
 	bool logHdma = false;
 	bool turbo = false;
+	std::string ramInit;   // zeros / ones / random: power-on RAM, pinned for reproducible runs
 };
 
 static uint32_t ParseAddr(const std::string& s)
@@ -101,7 +106,8 @@ static void PrintUsage(const char* prog)
 		"Options:\n"
 		"  --dap                   DAP mode (for VSCode integration)\n"
 		"  --batch                 Batch mode (non-interactive)\n"
-		"  --json                  JSON output (CLI/batch modes)\n"
+		"  --json                  JSON output: batch registers, or in the CLI one\n"
+		"                          JSON reply line per command (see CLAUDE.md)\n"
 		"  --headless              No SDL window or audio (max speed)\n"
 		"  --break <addr>          Set initial breakpoint (hex, repeatable)\n"
 		"  --timeout <ms>          Batch timeout (default 10000)\n"
@@ -112,6 +118,7 @@ static void PrintUsage(const char* prog)
 		"  --screenshot <file>     Capture frame to PNG (batch)\n"
 		"  --movie <file.mmo>      Play a Mesen movie file (.mmo)\n"
 		"  --turbo                 Run at maximum speed (no frame limiter)\n"
+		"  --ram-init <s>          Power-on RAM: zeros, ones or random (SNES)\n"
 		"  --log-bus               Log SNES bus writes to stdout\n"
 		"  --log-vram              Log SNES VRAM writes to stdout\n"
 		"  --log-hdma              Log SNES HDMA transfers to stdout\n"
@@ -189,6 +196,12 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			args.dumps.push_back({-1, type + "\t" + file});
 		} else if(arg == "--screenshot" && i + 1 < argc) {
 			args.screenshotFile = argv[++i];
+		} else if(arg == "--ram-init" && i + 1 < argc) {
+			args.ramInit = argv[++i];
+			if(args.ramInit != "zeros" && args.ramInit != "ones" && args.ramInit != "random") {
+				fprintf(stderr, "Invalid --ram-init %s (zeros, ones or random)\n", args.ramInit.c_str());
+				return false;
+			}
 		} else if(arg == "--turbo") {
 			args.turbo = true;
 		} else if(arg[0] == '-') {
@@ -317,6 +330,17 @@ static int RunDapMode(CliArgs& args)
 // --- CLI/Batch mode ---
 static int RunCliMode(CliArgs& args)
 {
+	// A JSON CLI session owns stdout for its replies: point fd 1 at stderr
+	// before the emulator exists, so the ROM-load log cannot precede the
+	// first reply.
+	FILE* jsonOut = nullptr;
+	if(args.jsonOutput && !args.batchMode) {
+		fflush(stdout);
+		int fd = dup(fileno(stdout));
+		dup2(fileno(stderr), fileno(stdout));
+		jsonOut = fdopen(fd, "w");
+	}
+
 	// 0. Set home folder (Mesen needs this for save states, settings, etc.)
 	{
 		const char* home = getenv("MESEN_HOME");
@@ -388,6 +412,21 @@ static int RunCliMode(CliArgs& args)
 	emu->GetSettings()->SetFlag(EmulationFlags::ConsoleMode);
 	emu->Pause();
 
+	// A debugger session drives input itself (the `input` command), and with
+	// no settings file a headless emulator has nothing plugged in: give empty
+	// SNES ports a standard controller. (A movie applies its own settings.)
+	if(!args.batchMode) {
+		SnesConfig& snes = emu->GetSettings()->GetSnesConfig();
+		if(snes.Port1.Type == ControllerType::None) snes.Port1.Type = ControllerType::SnesController;
+		if(snes.Port2.Type == ControllerType::None) snes.Port2.Type = ControllerType::SnesController;
+	}
+
+	if(!args.ramInit.empty()) {
+		emu->GetSettings()->GetSnesConfig().RamPowerOnState =
+			args.ramInit == "zeros" ? RamState::AllZeros :
+			args.ramInit == "ones" ? RamState::AllOnes : RamState::Random;
+	}
+
 	// 5. Load ROM (debugger auto-created inside, breaks on first instruction)
 	if(!emu->LoadRom((VirtualFile)args.romPath, VirtualFile())) {
 		fprintf(stderr, "Failed to load ROM: %s\n", args.romPath.c_str());
@@ -456,6 +495,18 @@ static int RunCliMode(CliArgs& args)
 			} else {
 				fprintf(stderr, "[Movie] Failed to start playback\n");
 			}
+			// Wait for the power cycle's re-break before the breakpoints
+			// below touch the debugger: until the emulation thread stops it
+			// may be in Emulator::WaitForLock, spinning on a break request,
+			// and SetBreakpoints raises one and spins until it stops - a
+			// deadlock (see DebuggerCli::WaitUntilStopped).
+			auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			while(std::chrono::steady_clock::now() < deadline) {
+				DebuggerRequest req = emu->GetDebugger(false);
+				Debugger* dbg = req.GetDebugger();
+				if(dbg && dbg->IsExecutionStopped()) break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
 		}
 	}
 
@@ -508,7 +559,10 @@ static int RunCliMode(CliArgs& args)
 		emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
 	}
 
-	// 11. Dispatch to batch or interactive mode
+	// 11. Dispatch to batch or interactive mode. The CLI's input provider is
+	// declared here so it outlives the teardown below: the emulator holds a
+	// raw pointer to it until it stops.
+	std::shared_ptr<CliInputProvider> input;
 	int exitCode = 0;
 	if(args.batchMode) {
 		BatchRunner runner(emu.get(), listener, primaryCpu, consoleType,
@@ -527,6 +581,12 @@ static int RunCliMode(CliArgs& args)
 		exitCode = runner.Run();
 	} else {
 		DebuggerCli cli(emu.get(), listener, primaryCpu, consoleType, args.jsonOutput);
+		if(jsonOut) cli.SetJsonOutput(jsonOut);
+		input = std::make_shared<CliInputProvider>(emu.get());
+		input->Attach();
+		emu->GetNotificationManager()->RegisterNotificationListener(input);
+		cli.SetInputProvider(input);
+		cli.SetMaximumSpeed(args.headless || args.turbo);
 		for(auto addr : args.breakAddresses) {
 			cli.AddInitialBreakpoint(addr);
 		}

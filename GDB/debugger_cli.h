@@ -3,12 +3,14 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <cstdio>
 #include "Shared/CpuType.h"
 #include "Shared/SettingTypes.h"
 
 class Emulator;
 class Debugger;
 class CliNotificationListener;
+class CliInputProvider;
 
 struct CliBreakpoint {
 	uint32_t id;
@@ -37,8 +39,29 @@ private:
 	bool _quit = false;
 	std::string _lastCommand;
 
+	// JSON mode: every command answers with exactly one JSON line on _out
+	// (the real stdout); fd 1 is pointed at stderr so emulator chatter and
+	// the text-only commands cannot corrupt the stream.
+	FILE* _out = nullptr;
+	bool _maxSpeed = false;   // headless/turbo: run every command flat out
+	std::shared_ptr<CliInputProvider> _input;   // the `input` command's controller state
+	bool _replied = false;
+	std::string _inBuf;  // stdin bytes read but not yet consumed as a line
+
 	void PrintState();
 	void PrintDisassemblyAtPC(int lines = 1);
+
+	std::string StateJson();
+	void Reply(const std::string& json);
+	void ReplyOk(const std::string& fields = "");
+	void ReplyError(const std::string& message);
+	void ReplyState(const char* stopped, const std::string& fields = "");
+	void Usage(const char* text);
+	bool ReadLine(std::string& line);
+	bool WaitOrPause(int timeoutMs);
+	uint32_t ProgramCounter();
+	void EnsureSpeed();
+	bool WaitUntilStopped(int timeoutMs);
 
 	// Command handlers
 	void CmdStep(int count);
@@ -63,12 +86,18 @@ private:
 	void CmdDump(const std::string& type, const std::string& filename);
 	void CmdScreenshot(const std::string& filename);
 	void CmdRunUntil(const RegCondition& cond);
+	void CmdUntil(uint32_t addr, int maxFrames);
+	void CmdWrite(uint32_t addr, const std::vector<uint8_t>& bytes);
+	void CmdSaveState(const std::string& filename);
+	void CmdLoadState(const std::string& filename);
+	void CmdMovie(const std::string& filename);
+	void CmdInput(int port, const std::string& buttons);
 	void CmdHelp();
 
 	uint16_t GetRegisterValue(const std::string& name, const uint8_t* stateBuffer);
 	bool ParseRegCondition(const std::string& expr, RegCondition& cond);
 	bool EvalRegCondition(const RegCondition& cond, const uint8_t* stateBuffer);
-	void SyncBreakpoints();
+	void SyncBreakpoints(int64_t extraAddr = -1);
 	std::vector<std::string> Tokenize(const std::string& line);
 	uint32_t ParseAddress(const std::string& str);
 
@@ -77,5 +106,10 @@ public:
 	            CpuType primaryCpu, ConsoleType consoleType, bool jsonOutput);
 
 	void AddInitialBreakpoint(uint32_t addr);
+	// JSON mode: where replies go (the real stdout, saved before anything
+	// else could write to it). Without one, Run() redirects stdout itself.
+	void SetJsonOutput(FILE* out) { _out = out; }
+	void SetMaximumSpeed(bool on) { _maxSpeed = on; }
+	void SetInputProvider(std::shared_ptr<CliInputProvider> input) { _input = input; }
 	void Run();  // enter REPL loop
 };

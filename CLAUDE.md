@@ -39,7 +39,43 @@ bin/linux-x64/Release/mesen-gdb --dap
 
 ### Interactive CLI Commands
 
-`step [N]`, `next`, `finish`, `continue`, `regs`, `disasm [addr] [count]`, `mem <addr> <len>`, `break <addr>`, `watch <addr>`, `delete <id>`, `info break`, `info regions`, `info cpu`, `backtrace`, `trace <file>`, `dump <type> <file>`, `reset`, `set <addr> <val>`, `quit`
+`step [N]`, `next`, `finish`, `continue`, `regs`, `disasm [addr] [count]`, `mem <addr> <len>`, `break <addr>`, `watch <addr>`, `delete <id>`, `info break`, `info regions`, `info cpu`, `backtrace`, `trace <file>`, `dump <type> <file>`, `reset`, `set <addr> <val>`, `frames <N>`, `rwatch <cond>`, `screenshot <file>`, `quit`, and:
+
+- `until <addr> <N>` — run to `<addr>`, at most N frames (bounded in emulated time).
+- `write <addr> <hex>` — several bytes at once (`write 7E0010 0a0b`).
+- `savestate <file>` / `loadstate <file>` — Mesen `.mss` states.
+- `input <port> <buttons>` — hold buttons on a controller (1 = first) until the next
+  `input`: a comma list of `a b x y l r select start up down left right`, or `none`. Live
+  input, polled once a frame - the alternative to a movie. SNES only; debugger sessions
+  plug a standard controller into empty ports (headless has none by default).
+- `movie <file.mmo>` / `movie stop` — play a movie inside the session (power cycle, then its
+  embedded `SaveState.mss` if the ROM's SHA1 matches). Breakpoints are re-applied after.
+  It (and `--movie` at startup) waits for the power cycle's re-break before touching the
+  debugger: a debugger call made while the emulation thread is still leaving
+  `Emulator::WaitForLock` deadlocks both threads (`DebuggerCli::WaitUntilStopped`).
+
+Addresses are hex; `mem`'s length is decimal. `--ram-init zeros|ones|random` pins SNES
+power-on RAM (otherwise random), so a session repeats exactly.
+
+### JSON protocol (`--json` without `--batch`)
+
+Send one command per line on stdin; every command gets
+exactly **one** JSON line on stdout — the first line is `{"ok":true,"stopped":"ready",...}`.
+Everything else (the ROM-load log, text-only commands like `disasm`) goes to stderr, so stdout
+carries replies only. Replies are `{"ok":true,...}` or `{"ok":false,"error":"..."}`:
+
+| Command | Extra fields |
+|---|---|
+| `frames`, `step`, `next`, `finish`, `run`, `until`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (`step`, `break`, `until`, ...), `frame`, `pc`, `cpu` (registers); `frames`/`until` add `frames` run, `until` adds `hit` |
+| `mem`, `wram`/`vram`/... | `addr`, `hex` (lower-case byte string) |
+| `dump`, `screenshot`, `savestate` | `path`, `bytes` / `frame` |
+| `break`, `watch` | `id` |
+
+A run command that exceeds its wall-clock allowance pauses the emulator and answers
+`"error":"timeout"`; nothing is left running under the next command. SIGTERM (or stdin EOF)
+ends the session at once; SIGINT interrupts the command in progress. A headless or `--turbo`
+session re-asserts maximum speed before every run command — loading a ROM, a movie or a state
+resets the rewind manager, which clears it and would otherwise pace the session at 60 fps.
 
 ## Architecture
 
