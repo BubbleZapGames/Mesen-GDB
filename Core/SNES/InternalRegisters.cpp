@@ -212,11 +212,11 @@ uint8_t InternalRegisters::Peek(uint16_t addr)
 
 		case 0x4218: return (uint8_t)_state.ControllerData[0];
 		case 0x4219: return (uint8_t)(_state.ControllerData[0] >> 8);
-		case 0x421A: return (uint8_t)(_state.ControllerData[1] >> 8);
+		case 0x421A: return (uint8_t)_state.ControllerData[1];
 		case 0x421B: return (uint8_t)(_state.ControllerData[1] >> 8);
-		case 0x421C: return (uint8_t)(_state.ControllerData[2] >> 8);
+		case 0x421C: return (uint8_t)_state.ControllerData[2];
 		case 0x421D: return (uint8_t)(_state.ControllerData[2] >> 8);
-		case 0x421E: return (uint8_t)(_state.ControllerData[3] >> 8);
+		case 0x421E: return (uint8_t)_state.ControllerData[3];
 		case 0x421F: return (uint8_t)(_state.ControllerData[3] >> 8);
 
 		default: return Read(addr);
