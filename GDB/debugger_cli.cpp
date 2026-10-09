@@ -1009,20 +1009,37 @@ void DebuggerCli::CmdRunUntil(const RegCondition& cond)
 	printf("\nAborted.\n");
 }
 
-// CmdInput - hold *buttons* (a comma list, or "none") on controller *port*
-// (1 = the first) until the next `input`: live input, polled once a frame.
+// CmdInput - hold *buttons* on controller *port* (1 = the first) until the
+// next `input`: live input, polled once a frame. *buttons* is a comma list,
+// "none", or a raw number (decimal or 0x hex) in the auto-joypad layout a game
+// reads from $4218 (sneslib's JOY_* masks): bit 15 B, Y, Select, Start, Up,
+// Down, Left, Right, A, X, L, bit 4 R. Bits 0-3 are the controller's ID bits,
+// not buttons, and are ignored.
 void DebuggerCli::CmdInput(int port, const std::string& buttons)
 {
 	if(!_input) { Usage("input: no input provider"); return; }
 	if(_consoleType != ConsoleType::Snes) { Usage("input: SNES controllers only"); return; }
 	if(port < 1 || port > 8) { Usage("input: port is 1-8"); return; }
 
-	// SnesController's key names, in its text-state order.
+	// SnesController's key names, in its text-state order, with each one's
+	// bit in the $4218 word.
 	static const char* names[12] = { "a", "b", "x", "y", "l", "r", "select", "start",
 	                                 "up", "down", "left", "right" };
+	static const int bits[12] = { 7, 15, 6, 14, 5, 4, 13, 12, 11, 10, 9, 8 };
 	static const char letters[] = "ABXYLRSTUDLR";
 	std::string text(12, '.');
-	if(buttons != "none") {
+	if(!buttons.empty() && isdigit((unsigned char)buttons[0])) {
+		bool hex = buttons.size() > 2 && buttons[0] == '0' && (buttons[1] == 'x' || buttons[1] == 'X');
+		std::string digits = hex ? buttons.substr(2) : buttons;
+		size_t used = 0;
+		unsigned long value = 0;
+		try { value = std::stoul(digits, &used, hex ? 16 : 10); } catch(...) { used = 0; }
+		if(used == 0 || used != digits.size()) { Usage(("input: bad number " + buttons).c_str()); return; }
+		if(value > 0xFFFF) { Usage("input: a raw value is 16 bits"); return; }
+		for(int i = 0; i < 12; i++) {
+			if(value & (1u << bits[i])) text[i] = letters[i];
+		}
+	} else if(buttons != "none") {
 		std::stringstream ss(buttons);
 		std::string name;
 		while(std::getline(ss, name, ',')) {
@@ -1086,7 +1103,8 @@ void DebuggerCli::CmdHelp()
 		"  loadstate <file>  Load a state (.mss)\n"
 		"  movie <file>|stop Play a movie (.mmo) in this session, or stop it\n"
 		"  input <port> <b,..> Hold buttons on a controller (1 = first) until changed;\n"
-		"                    a b x y l r select start up down left right, or none\n"
+		"                    a b x y l r select start up down left right, none, or\n"
+		"                    a raw $4218 word: input 1 0x8000 (B), input 1 128 (A)\n"
 		"  reset             Reset emulator\n"
 		"  rwatch <cond>     Run until register condition is true\n"
 		"                    Examples: SP>$1FF, D!=0, A=$42, S<$100\n"
@@ -1286,7 +1304,7 @@ void DebuggerCli::Run()
 				if(tokens.size() < 2) { Usage("Usage: loadstate <file>"); continue; }
 				CmdLoadState(tokens[1]);
 			} else if(cmd == "input") {
-				if(tokens.size() < 3) { Usage("Usage: input <port> <button,...|none>"); continue; }
+				if(tokens.size() < 3) { Usage("Usage: input <port> <button,...|none|number>"); continue; }
 				CmdInput(std::stoi(tokens[1]), tokens[2]);
 			} else if(cmd == "movie") {
 				if(tokens.size() < 2) { Usage("Usage: movie <file.mmo>|stop"); continue; }

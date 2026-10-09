@@ -101,7 +101,7 @@ printf 'break 8100\nrun\nregs\nmem 7E0010 16\nquit\n' | mesen-gdb game.sfc --hea
 | `loadstate <file>` | | Load a state |
 | `movie <file.mmo>` | | Play a Mesen movie: power cycle, then its recorded input. Breakpoints stay set |
 | `movie stop` | | Stop the movie |
-| `input <port> <buttons>` | | Hold buttons on a controller until the next `input` (below) |
+| `input <port> <buttons\|number>` | | Hold buttons on a controller until the next `input` (below) |
 | `trace <file> [regs]` | | Log every executed instruction to a file; `regs` adds disassembly and registers |
 | `trace off` | | Stop logging |
 
@@ -122,8 +122,15 @@ their own, such as `chr`, `nt` and `pal` on the NES, `hram` on the Game Boy and
 
 **Live input** (SNES): `input 1 right,b` holds Right and B on the first
 controller until the next `input` for that port, and `input 1 none` releases
-everything. The buttons are `a b x y l r select start up down left right`. The
-game sees the new state on its next poll, so input is set between runs:
+everything. The buttons are `a b x y l r select start up down left right`.
+
+The buttons can also be one raw number, in decimal or `0x` hex: the 16-bit word
+a game reads from `$4218`, with bit 15 B, then Y, Select, Start, Up, Down, Left,
+Right, A, X, L, and R at bit 4. `input 1 0x8000` holds B, `input 2 128` holds
+A, and `input 1 0` releases everything. Bits 0-3 are the controller's ID bits,
+not buttons, and are ignored.
+
+The game sees the new state on its next poll, so input is set between runs:
 
 ```
 input 1 start

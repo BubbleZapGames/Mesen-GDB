@@ -44,8 +44,9 @@ bin/linux-x64/Release/mesen-gdb --dap
 - `until <addr> <N>` — run to `<addr>`, at most N frames (bounded in emulated time).
 - `write <addr> <hex>` — several bytes at once (`write 7E0010 0a0b`).
 - `savestate <file>` / `loadstate <file>` — Mesen `.mss` states.
-- `input <port> <buttons>` — hold buttons on a controller (1 = first) until the next
-  `input`: a comma list of `a b x y l r select start up down left right`, or `none`. Live
+- `input <port> <buttons|number>` — hold buttons on a controller (1 = first) until the next
+  `input`: a comma list of `a b x y l r select start up down left right`, `none`, or a raw
+  number (decimal or `0x` hex) in the `$4218` layout (bit 15 B ... bit 4 R, bits 0-3 ignored). Live
   input, polled once a frame - the alternative to a movie. SNES only; debugger sessions
   plug a standard controller into empty ports (headless has none by default).
 - `movie <file.mmo>` / `movie stop` — play a movie inside the session (power cycle, then its
