@@ -323,7 +323,7 @@ With it a SNES ROM test is an ordinary pytest test. It has:
 - chainable live input;
 - **motions**, compact input strings for exact or overlapping presses;
 - memory read by `.sym`/`.dbg` symbol name;
-- named game states, built once and cached as save states;
+- game states, each a builder function, built once and cached as save states;
 - `snes` and `state` fixtures.
 
 ```bash
@@ -332,6 +332,7 @@ pip install -e python
 
 ```python
 from mesen_gdb.rom_driver import motion
+from states import level1               # a @rom_state builder (tests/states.py)
 
 hadouken = motion("D5R5dX5xr")          # Down 5 frames, Down+Right 5, Right+X 5, release
 
@@ -339,8 +340,8 @@ def test_scroll(snes):                  # a session at power-on
     snes.wait(20).right(30)
     assert snes.var.camera_x == 0x5A
 
-def test_special(state):                # a session restored to a named state
-    s = state("level1").play(hadouken)
+def test_special(state):                # a session restored to level1's state
+    s = state(level1).play(hadouken)
     assert s.var.fireballs.u8[0] == 1
 ```
 

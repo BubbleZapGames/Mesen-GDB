@@ -12,8 +12,8 @@
 Input methods run the emulator and return the session, so they chain. For
 exact, overlapping or several-controller input, `play` takes a motion -
 ``s.play("D5R5dX5xr")`` - or a `pad` of them (motion.py). A
-named state (`rom_state`, states.py) is a save state built once by such a
-chain; ``rom.session(state="level1")`` starts there.
+state (`rom_state`, states.py) is a save state built once by such a chain;
+``rom.session(state=level1)`` starts there.
 """
 
 import hashlib
@@ -21,7 +21,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, FrozenSet, Optional, Union
+from typing import Callable, Dict, FrozenSet, Optional, Union
 
 from . import states
 from .backend import BUTTONS, Backend, NotReached, RomDriverError, Stop
@@ -76,11 +76,11 @@ class Rom:
         self.backend_args = backend_args
         self.cache_dir = Path(cache_dir) if cache_dir else self.path.parent / '.rom_driver'
 
-    def session(self, state: Union[str, Path, None] = None) -> 'Session':
+    def session(self, state: Union[Callable, Path, None] = None) -> 'Session':
         """A started session: at power-on, or restored to *state*.
 
-        *state* is a registered state's name (built if not cached) or a path
-        to a save state file.
+        *state* is a `rom_state` builder (its state built if not cached) or a
+        path to a save state file.
         """
         path = None
         if state is not None:
@@ -95,15 +95,15 @@ class Rom:
             raise
         return s
 
-    def state(self, name: str) -> Path:
-        """The save state for the registered state *name*, built if not cached.
+    def state(self, state: Callable) -> Path:
+        """The save state for the `rom_state` builder *state*, built if not cached.
 
         Built from its parent's state (or power-on) by its builder, and keyed
         by this ROM's hash and every builder's source in the chain.
         """
-        d = states.lookup(name)
-        key = hashlib.sha1(f'{self.sha1}\n{states.fingerprint(name)}'.encode()).hexdigest()[:16]
-        out = self.cache_dir / f'{name}-{key}.mss'
+        d = states.definition(state)
+        key = hashlib.sha1(f'{self.sha1}\n{states.fingerprint(state)}'.encode()).hexdigest()[:16]
+        out = self.cache_dir / f'{d.name}-{key}.mss'
         if out.is_file():
             return out
         parent = self.state(d.parent) if d.parent else None

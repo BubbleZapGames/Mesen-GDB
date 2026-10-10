@@ -110,9 +110,10 @@ resets the rewind manager, which clears it and would otherwise pace the session 
 ### Python test driver (`python/`)
 
 `mesen_gdb.rom_driver` speaks this protocol so SNES ROM tests run as ordinary pytest tests: chainable
-live input, motions (`motion("D5R5dX5xr")`), memory by `.sym`/`.dbg` symbol name, named states cached
-as save states, and `snes`/`state` fixtures. Install with `pip install -e python`; its own tests run
-with `pytest python/tests`. Usage is in [python/README.md](python/README.md). A change to a JSON reply
+live input, motions (`motion("D5R5dX5xr")`), memory by `.sym`/`.dbg` symbol name, states
+(`@rom_state` builders, passed as functions: `state(level1)`) cached as save states, and
+`snes`/`state` fixtures. Install with `pip install -e python`; its own tests run with
+`pytest python/tests`. Usage is in [python/README.md](python/README.md). A change to a JSON reply
 is a change to `python/mesen_gdb/rom_driver/mesen.py` too.
 
 ## Architecture

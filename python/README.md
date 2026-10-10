@@ -28,18 +28,24 @@ with rom.session() as s:                # powered on, paused, pad released
     s.screenshot("shot.png")
 ```
 
-With pytest, a project's `tests/conftest.py` supplies the ROM, registers its
-named states, and imports the fixtures:
+With pytest, a project's `tests/conftest.py` supplies the ROM and imports the
+fixtures:
 
 ```python
 import pytest
 from pathlib import Path
-from mesen_gdb.rom_driver import Rom, rom_state
+from mesen_gdb.rom_driver import Rom
 from mesen_gdb.rom_driver.pytest_plugin import snes, state   # noqa: F401
 
 @pytest.fixture(scope="session")
 def rom():
     return Rom(Path(__file__).parent.parent / "build" / "GAME.smc")
+```
+
+Its states are builders in a module the tests import, `tests/states.py`:
+
+```python
+from mesen_gdb.rom_driver import rom_state
 
 @rom_state
 def level1(s):
@@ -47,12 +53,14 @@ def level1(s):
 ```
 
 ```python
+from states import level1
+
 def test_jump(snes):                    # a session at power-on
     snes.wait(60).start().wait(120).a()
     assert snes.var.player_y < 0xA0
 
 def test_boss_door(state):              # a session restored to `level1`
-    s = state("level1")
+    s = state(level1)
     s.right(400).upright(20)
     assert s.var.room == 3
 ```
@@ -131,23 +139,25 @@ Every run is bounded in emulated frames, and every call has a wall-clock
 deadline as a backstop: a call that overruns kills the emulator and raises
 `RomTimeout`. A test can fail; it cannot hang.
 
-## Named states
+## States
 
 A state is a builder - a function that drives a session to a point in the game -
-registered with `@rom_state`, optionally starting where another ends:
+marked with `@rom_state`, optionally starting where another ends, and named by
+the function itself:
 
 ```python
 @rom_state
 def level1(s):
     s.wait(60).start().wait(120)
 
-@rom_state(parent="level1")
+@rom_state(parent=level1)
 def level1_boss(s):
     s.right(2400).wait(60)
 ```
 
-`state("level1_boss")` (the fixture) or `rom.session(state="level1_boss")`
-opens a session restored to it. The first use builds the chain - `level1` from
+`state(level1_boss)` (the fixture) or `rom.session(state=level1_boss)`
+opens a session restored to it. A function not marked with `@rom_state` is
+refused. The first use builds the chain - `level1` from
 power-on, then `level1_boss` from there - and saves each as a save state in
 `build/.rom_driver/`, keyed by the ROM's hash and every builder's source, so
 editing a builder (or a parent) rebuilds it and a rebuilt ROM does too. A helper
