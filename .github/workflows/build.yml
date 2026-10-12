@@ -119,8 +119,15 @@ jobs:
           path: bin/windows-x64/Release/mesen-gdb.exe
 
   macos:
-    # Apple Silicon, with SDL linked in statically.
-    runs-on: macos-26
+    # Apple Silicon and Intel, each built and tested natively, with SDL
+    # linked in statically.
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-26, platform: osx-arm64, name: arm64 }
+          - { runner: macos-26-intel, platform: osx-x64, name: x64 }
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,7 +136,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/sdl2-static
-          key: sdl2-static-macos-${{ hashFiles('tools/build-sdl2-static.sh') }}
+          key: sdl2-static-macos-${{ matrix.name }}-${{ hashFiles('tools/build-sdl2-static.sh') }}
 
       # Built from SDL's source (checked by SHA-256) for macOS 11 and later.
       - name: Build SDL
@@ -142,7 +149,7 @@ jobs:
       # One self-contained binary: nothing outside macOS itself.
       - name: Only system libraries
         run: |
-          libs=$(otool -L bin/osx-arm64/Release/mesen-gdb | tail -n +2 | awk '{print $1}')
+          libs=$(otool -L bin/${{ matrix.platform }}/Release/mesen-gdb | tail -n +2 | awk '{print $1}')
           echo "$libs"
           if echo "$libs" | grep -vE '^(/usr/lib/|/System/Library/)'; then
             echo "::error::mesen-gdb needs a library that is not part of macOS"
@@ -153,22 +160,22 @@ jobs:
         run: make test SDL2_PREFIX="$RUNNER_TEMP/sdl2-static"
 
       - name: Starts
-        run: "{ bin/osx-arm64/Release/mesen-gdb --help 2>&1 || true; } | grep -q -- --headless"
+        run: "{ bin/${{ matrix.platform }}/Release/mesen-gdb --help 2>&1 || true; } | grep -q -- --headless"
 
       # macOS only allows windows on the main thread: open one (no ROM
       # needed) and check the session survives it.
       - name: Opens its window
-        run: python3 tools/check-dap-window.py bin/osx-arm64/Release/mesen-gdb
+        run: python3 tools/check-dap-window.py bin/${{ matrix.platform }}/Release/mesen-gdb
 
       # A ROM in the window: without --headless, a CLI session that cannot
       # open SDL exits 2 instead of running headless.
       - name: Runs a ROM in its window
-        run: bin/osx-arm64/Release/mesen-gdb tests/roms/green/green.sfc --script tests/roms/green/screen-is-green
+        run: bin/${{ matrix.platform }}/Release/mesen-gdb tests/roms/green/green.sfc --script tests/roms/green/screen-is-green
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mesen-gdb-macos-arm64
-          path: bin/osx-arm64/Release/mesen-gdb
+          name: mesen-gdb-macos-${{ matrix.name }}
+          path: bin/${{ matrix.platform }}/Release/mesen-gdb
 
       # A crash leaves its report here; it is the backtrace we cannot get
       # any other way without a Mac.
@@ -176,7 +183,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-crash-reports
+          name: macos-crash-reports-${{ matrix.name }}
           path: ~/Library/Logs/DiagnosticReports/
           if-no-files-found: ignore
 
@@ -198,9 +205,10 @@ jobs:
       - name: Package
         run: |
           mkdir dist
-          chmod +x artifacts/mesen-gdb-linux-x64/mesen-gdb artifacts/mesen-gdb-macos-arm64/mesen-gdb
+          chmod +x artifacts/mesen-gdb-linux-x64/mesen-gdb artifacts/mesen-gdb-macos-*/mesen-gdb
           tar -czf dist/mesen-gdb-$GITHUB_REF_NAME-linux-x64.tar.gz -C artifacts/mesen-gdb-linux-x64 mesen-gdb
           tar -czf dist/mesen-gdb-$GITHUB_REF_NAME-macos-arm64.tar.gz -C artifacts/mesen-gdb-macos-arm64 mesen-gdb
+          tar -czf dist/mesen-gdb-$GITHUB_REF_NAME-macos-x64.tar.gz -C artifacts/mesen-gdb-macos-x64 mesen-gdb
           (cd artifacts/mesen-gdb-windows-x64 && zip -q ../../dist/mesen-gdb-$GITHUB_REF_NAME-windows-x64.zip mesen-gdb.exe)
           (cd dist && sha256sum * > SHA256SUMS)
           cat dist/SHA256SUMS
@@ -211,4 +219,4 @@ jobs:
         run: |
           prerelease=$([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease || true)
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $prerelease \
-            --notes "The Linux build needs SDL2 installed (libsdl2-2.0-0 on Debian/Ubuntu). The Windows .exe and the macOS (Apple Silicon, macOS 11+) binary are self-contained. macOS quarantines an unsigned download: run \`xattr -d com.apple.quarantine mesen-gdb\` once."
+            --notes "The Linux build needs SDL2 installed (libsdl2-2.0-0 on Debian/Ubuntu). The Windows .exe and the macOS binaries (arm64 for Apple Silicon, x64 for Intel; macOS 11+) are self-contained. macOS quarantines an unsigned download: run \`xattr -d com.apple.quarantine mesen-gdb\` once."

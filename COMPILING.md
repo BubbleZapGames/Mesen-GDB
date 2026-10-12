@@ -37,4 +37,5 @@ mesen-gdb against it:
     tools/build-sdl2-static.sh ~/.local/opt/sdl2-static
     make SDL2_PREFIX=~/.local/opt/sdl2-static
 
-The result is `bin/osx-arm64/Release/mesen-gdb` on Apple Silicon.
+The result is `bin/osx-arm64/Release/mesen-gdb` on Apple Silicon, or
+`bin/osx-x64/Release/mesen-gdb` on an Intel Mac.

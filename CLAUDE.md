@@ -181,7 +181,8 @@ The R65 compiler's end-to-end tests use this binary to verify generated code.
 CI (`.github/workflows/build.yml`, on every push and pull request) builds the Linux and Windows SDL
 binaries on Ubuntu 24.04, runs `make test` for both (Windows under Wine) and `pytest python/tests`,
 and uploads `mesen-gdb` and `mesen-gdb.exe` as artifacts. A `macos` job builds and tests on Apple
-Silicon (`macos-26`, SDL2 linked statically via `tools/build-sdl2-static.sh`), checks the window
-opens (`tools/check-dap-window.py`, no ROM needed) and uploads its binary. Pushing a `v*` tag (`git tag v1.2.0 && git push
-origin v1.2.0`) also publishes them as a GitHub Release, once all three builds pass: Linux and macOS `.tar.gz`s, a
-Windows `.zip` and `SHA256SUMS`; a tag with a hyphen (`v1.2.0-rc1`) makes a prerelease.
+Silicon (`macos-26`) and Intel (`macos-26-intel`), SDL2 linked statically via
+`tools/build-sdl2-static.sh`; each checks the window opens (`tools/check-dap-window.py`) and runs
+the green test ROM in it, and uploads its binary. Pushing a `v*` tag (`git tag v1.2.0 && git push
+origin v1.2.0`) also publishes them as a GitHub Release, once every build passes: `.tar.gz`s for Linux and macOS (arm64,
+x64), a Windows `.zip` and `SHA256SUMS`; a tag with a hyphen (`v1.2.0-rc1`) makes a prerelease.
