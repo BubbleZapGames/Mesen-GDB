@@ -120,7 +120,6 @@ jobs:
 
   macos:
     # Apple Silicon, with SDL linked in statically.
-    # Not in releases yet: the SDL window must move to the main thread first.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -156,6 +155,11 @@ jobs:
       - name: Starts
         run: "{ bin/osx-arm64/Release/mesen-gdb --help 2>&1 || true; } | grep -q -- --headless"
 
+      # macOS only allows windows on the main thread: open one (no ROM
+      # needed) and check the session survives it.
+      - name: Opens its window
+        run: python3 tools/check-dap-window.py bin/osx-arm64/Release/mesen-gdb
+
       - uses: actions/upload-artifact@v4
         with:
           name: mesen-gdb-macos-arm64
@@ -176,7 +180,7 @@ jobs:
   # with a hyphen (v1.2.0-rc1) makes a prerelease.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -189,8 +193,9 @@ jobs:
       - name: Package
         run: |
           mkdir dist
-          chmod +x artifacts/mesen-gdb-linux-x64/mesen-gdb
+          chmod +x artifacts/mesen-gdb-linux-x64/mesen-gdb artifacts/mesen-gdb-macos-arm64/mesen-gdb
           tar -czf dist/mesen-gdb-$GITHUB_REF_NAME-linux-x64.tar.gz -C artifacts/mesen-gdb-linux-x64 mesen-gdb
+          tar -czf dist/mesen-gdb-$GITHUB_REF_NAME-macos-arm64.tar.gz -C artifacts/mesen-gdb-macos-arm64 mesen-gdb
           (cd artifacts/mesen-gdb-windows-x64 && zip -q ../../dist/mesen-gdb-$GITHUB_REF_NAME-windows-x64.zip mesen-gdb.exe)
           (cd dist && sha256sum * > SHA256SUMS)
           cat dist/SHA256SUMS
@@ -201,4 +206,4 @@ jobs:
         run: |
           prerelease=$([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease || true)
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $prerelease \
-            --notes "The Linux build needs SDL2 installed (libsdl2-2.0-0 on Debian/Ubuntu). The Windows build is a single self-contained .exe."
+            --notes "The Linux build needs SDL2 installed (libsdl2-2.0-0 on Debian/Ubuntu). The Windows .exe and the macOS (Apple Silicon, macOS 11+) binary are self-contained. macOS quarantines an unsigned download: run \`xattr -d com.apple.quarantine mesen-gdb\` once."
