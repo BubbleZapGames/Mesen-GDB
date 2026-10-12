@@ -41,13 +41,11 @@
 #include "Core/Debugger/DAP/DapServer.h"
 #include "Core/Debugger/DAP/DapNotificationListener.h"
 
-#ifndef MESEN_HEADLESS
 #ifdef __linux__
 #include "Linux/LinuxKeyManager.h"
 #endif
 #include "Sdl/SdlRenderer.h"
 #include "Sdl/SdlSoundManager.h"
-#endif
 
 static std::atomic<bool> g_running{true};
 static std::shared_ptr<CliNotificationListener> g_listener;
@@ -65,7 +63,7 @@ static void signalHandler(int sig)
 }
 
 // Frontend - the game window, sound and keyboard of a session that is not
-// headless. A HEADLESS=true build has none of them, and no SDL.
+// headless (--headless).
 //
 // SDL lives on the main thread, which macOS requires of windows and their
 // events: Start, Run and Stop are called there, and Run runs the session (the
@@ -74,18 +72,6 @@ static void signalHandler(int sig)
 class Frontend
 {
 public:
-#ifdef MESEN_HEADLESS
-	static constexpr bool Available = false;
-	bool Start() { return false; }
-	const char* Error() { return "built with HEADLESS=true"; }
-	void Attach(Emulator*) {}
-	void Detach() {}
-	void OnWindowClosed(std::function<void()>) {}
-	int Run(std::function<int()> session) { return session(); }
-	void Stop() {}
-#else
-	static constexpr bool Available = true;
-
 	~Frontend() { Stop(); }
 
 	// False when SDL cannot start (no display); Error() says why.
@@ -218,7 +204,6 @@ private:
 		_wake.notify_all();
 		wait.wait();
 	}
-#endif
 };
 
 struct CliArgs {
@@ -763,11 +748,6 @@ int main(int argc, char* argv[])
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
 	CliPlatform::UseBinaryStdio();
-
-	if(!args.headless && !Frontend::Available) {
-		fprintf(stderr, "Built without a game window (HEADLESS=true): running headless.\n");
-		args.headless = true;
-	}
 
 	MessageManager::SetOptions(false, true);
 

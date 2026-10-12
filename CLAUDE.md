@@ -13,9 +13,7 @@ make                        # Release build with Clang (default)
 make -j$(nproc)             # Parallel release build
 DEBUG=1 make                # Debug build (-O0 -g)
 USE_GCC=true make           # Build with GCC instead of Clang
-HEADLESS=true make          # No SDL, window, sound or keyboard: runs --headless only
-make TARGET=windows         # Cross-compile a headless mesen-gdb.exe with MinGW-w64 (g++-mingw-w64-x86-64-posix)
-make TARGET=windows SDL2_PREFIX=~/.local/opt/SDL2-2.30.12/x86_64-w64-mingw32   # ... with the game window and sound
+make TARGET=windows SDL2_PREFIX=~/.local/opt/SDL2-2.30.12/x86_64-w64-mingw32   # Cross-compile mesen-gdb.exe with MinGW-w64 (g++-mingw-w64-x86-64-posix)
 make test TARGET=windows    # ... and run its unit tests under Wine
 SANITIZER=address DEBUG=1 make  # AddressSanitizer build
 SANITIZER=thread DEBUG=1 make   # ThreadSanitizer build

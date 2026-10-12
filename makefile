@@ -1,10 +1,9 @@
 #Both clang & gcc work fine - clang seems to output faster code
-#The game window, sound and keyboard require SDL2; HEADLESS=true builds without
-#them (and without libevdev/X11), for a binary that only runs --headless.
-#SDL2_PREFIX links SDL2 statically from a prefix; macOS requires it (build one
-#with tools/build-sdl2-static.sh). TARGET=windows cross-compiles mesen-gdb.exe
-#with MinGW-w64 (GCC, posix threads); MINGW is its tool prefix. It is headless
-#unless SDL2_PREFIX names SDL's MinGW package (.../SDL2-2.30.12/x86_64-w64-mingw32).
+#The game window, sound and keyboard require SDL2 (--headless runs without
+#them). SDL2_PREFIX links SDL2 statically from a prefix; macOS requires it
+#(build one with tools/build-sdl2-static.sh). TARGET=windows cross-compiles
+#mesen-gdb.exe with MinGW-w64 (GCC, posix threads); MINGW is its tool prefix,
+#and SDL2_PREFIX names SDL's MinGW package (.../SDL2-2.30.12/x86_64-w64-mingw32).
 #Run "make" to build
 
 MESENFLAGS=
@@ -12,7 +11,6 @@ MESENFLAGS=
 ifeq ($(TARGET),windows)
 	USE_GCC := true
 	MINGW ?= x86_64-w64-mingw32-
-	HEADLESS ?= $(if $(SDL2_PREFIX),false,true)
 endif
 
 ifeq ($(USE_GCC),true)
@@ -87,21 +85,19 @@ ifeq ($(TARGET),windows)
 	TESTRUNNER ?= wine
 endif
 
-HEADLESS ?= false
-
 # SDL2. A prefix (SDL2_PREFIX) is linked statically, which Windows and macOS
 # require: their binaries carry SDL in them. Linux otherwise uses the
-# system's shared SDL.
-ifneq ($(HEADLESS),true)
-	ifneq ($(SDL2_PREFIX),)
-		SDL2_CONFIG ?= $(SDL2_PREFIX)/bin/sdl2-config
-		# Without SDL2main, which would replace mesen-gdb's own main(), and
-		# without -mwindows, which would detach the console the CLI's stdin
-		# and stdout use.
-		SDL2LIB := $(filter-out -mwindows -lSDL2main -lmingw32,$(shell $(SDL2_CONFIG) --static-libs))
-		SDL2INC := $(filter-out -Dmain=SDL_main,$(shell $(SDL2_CONFIG) --cflags)) -DSDL_MAIN_HANDLED
-	else ifeq ($(MESENOS),windows)
-$(error TARGET=windows needs SDL2_PREFIX for the game window, or HEADLESS=true)
+# system's shared SDL. `make test` and `make clean` need none.
+ifneq ($(SDL2_PREFIX),)
+	SDL2_CONFIG ?= $(SDL2_PREFIX)/bin/sdl2-config
+	# Without SDL2main, which would replace mesen-gdb's own main(), and
+	# without -mwindows, which would detach the console the CLI's stdin
+	# and stdout use.
+	SDL2LIB := $(filter-out -mwindows -lSDL2main -lmingw32,$(shell $(SDL2_CONFIG) --static-libs))
+	SDL2INC := $(filter-out -Dmain=SDL_main,$(shell $(SDL2_CONFIG) --cflags)) -DSDL_MAIN_HANDLED
+else ifneq ($(filter-out test clean,$(or $(MAKECMDGOALS),all)),)
+	ifeq ($(MESENOS),windows)
+$(error TARGET=windows needs SDL2_PREFIX: SDL's MinGW package, e.g. .../SDL2-2.30.12/x86_64-w64-mingw32)
 	else ifeq ($(MESENOS),osx)
 $(error macOS links SDL2 statically: build it with tools/build-sdl2-static.sh <prefix>, then make SDL2_PREFIX=<prefix>)
 	else
@@ -194,12 +190,10 @@ COREOBJ := $(call objs,$(CORESRC))
 UTILSRC := $(shell find Utilities -name '*.cpp' -o -name '*.c')
 UTILOBJ := $(call objs,$(UTILSRC))
 
-ifneq ($(HEADLESS),true)
-	SDLSRC := $(shell find Sdl -name '*.cpp')
-endif
+SDLSRC := $(shell find Sdl -name '*.cpp')
 SDLOBJ := $(call objs,$(SDLSRC))
 
-ifeq ($(MESENOS)-$(HEADLESS),linux-false)
+ifeq ($(MESENOS),linux)
 	LINUXSRC := $(shell find Linux -name '*.cpp')
 else
 	LINUXSRC :=
@@ -218,7 +212,7 @@ else
 	LIBEVDEVINC := -I../
 endif
 
-ifeq ($(MESENOS)-$(HEADLESS),linux-false)
+ifeq ($(MESENOS),linux)
 	X11LIB := -lX11
 else
 	X11LIB :=
@@ -230,13 +224,7 @@ GDBSRC := $(filter-out GDB/DapMain.cpp, $(filter-out GDB/test_%.cpp, $(shell fin
 GDBOBJ := $(call objs,$(GDBSRC))
 
 GDBMAINSRC := GDB/DapMain.cpp
-# Only DapMain differs in a headless build: its own object, so switching
-# HEADLESS never links a stale one.
-ifeq ($(HEADLESS),true)
-	GDBMAINOBJ := $(OBJFOLDER)/GDB/DapMain.headless.o
-else
-	GDBMAINOBJ := $(call objs,$(GDBMAINSRC))
-endif
+GDBMAINOBJ := $(call objs,$(GDBMAINSRC))
 
 GDBBIN := mesen-gdb$(EXE)
 
@@ -246,15 +234,6 @@ ifneq ($(MESENOS),linux)
 	LIBEVDEVSRC :=
 	FSLIB :=
 endif
-
-ifeq ($(HEADLESS),true)
-	LIBEVDEVOBJ :=
-	LIBEVDEVLIB :=
-endif
-
-# Records the last HEADLESS value, so switching it relinks: the link's
-# inputs change, but not their dates.
-BUILDKIND := $(OUTFOLDER)/.headless
 
 all: $(OUTFOLDER)/$(GDBBIN)
 
@@ -270,19 +249,9 @@ $(OBJFOLDER)/%.o: %.mm
 	@mkdir -p $(@D)
 	$(CXX) $(OBJCXXFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(OBJFOLDER)/GDB/DapMain.headless.o: GDB/DapMain.cpp
-	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -DMESEN_HEADLESS -c $< -o $@
-
 -include $(shell find $(OBJFOLDER) -name '*.d' 2>/dev/null)
 
-$(BUILDKIND): FORCE
-	@mkdir -p $(OUTFOLDER)
-	@echo $(HEADLESS) | cmp -s - $@ || echo $(HEADLESS) > $@
-
-.PHONY: FORCE
-
-$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(MACOSOBJ) $(BUILDKIND)
+$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(MACOSOBJ)
 	mkdir -p $(OUTFOLDER)
 	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB) $(WINLIBS)
 
@@ -301,6 +270,6 @@ test: $(TESTOBJ) $(DAPTESTOBJ)
 
 clean:
 	rm -r -f $(OBJFOLDER)
-	rm -r -f $(OUTFOLDER)/$(GDBBIN) $(BUILDKIND) bin/dap-test$(EXE)
+	rm -r -f $(OUTFOLDER)/$(GDBBIN) bin/dap-test$(EXE)
 	# Objects from before obj.<platform>, built beside their sources
 	find Core Utilities Sdl Linux MacOS GDB -name '*.o' -delete
