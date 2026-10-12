@@ -131,7 +131,8 @@ Core/              Upstream Mesen2 emulation core (read-only in practice)
   NES/, Gameboy/, GBA/, PCE/, SMS/, WS/   Other console emulators
 
 GDB/               The custom code in this fork (~1900 lines, 9 files)
-  DapMain.cpp      Entry point, CLI arg parsing, emulator initialization
+  DapMain.cpp      Entry point, CLI arg parsing, emulator initialization. With a window, SDL runs on
+                   the main thread (macOS requires it) and the CLI/DAP session on a worker (Frontend)
   batch_runner.*   Non-interactive test runner with register/memory assertions
   debugger_cli.*   Interactive GDB-style REPL
   cli_symbols.*    .sym/.dbg symbols and address parsing for the CLI and its options

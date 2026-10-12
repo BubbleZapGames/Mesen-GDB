@@ -144,29 +144,11 @@ void SdlRenderer::Cleanup()
 	}
 }
 
-void SdlRenderer::OnRendererThreadStarted()
-{
-	//SDL stops working if the rendering moves to a new thread
-	//Reset everything to make it work again
-#ifdef _WIN32
-	//A Windows window belongs to the thread that created it and died with
-	//the previous render thread (loading a ROM replaces it): free SDL's side,
-	//and Init() opens a new one that this thread owns and pumps events for.
-	if(_ownsWindow && _sdlWindow) {
-		Cleanup();
-		SDL_DestroyWindow(_sdlWindow);
-		_sdlWindow = nullptr;
-	}
-#endif
-	Reset();
-}
-
 void SdlRenderer::Reset()
 {
 	Cleanup();
 	if(Init()) {
 		InitTexture();
-		_emu->GetVideoRenderer()->RegisterRenderingDevice(this);
 	} else {
 		Cleanup();
 	}
@@ -252,24 +234,47 @@ void SdlRenderer::UpdateHudTexture(HudRenderInfo& hud, uint32_t* src)
 	SDL_UnlockTexture(hud.Texture);
 }
 
+void SdlRenderer::CopyHud(HudCopy& dst, RenderSurfaceInfo& src)
+{
+	if(dst.Width != src.Width || dst.Height != src.Height) {
+		dst.Buffer.assign(src.Width * src.Height, 0);
+		dst.Width = src.Width;
+		dst.Height = src.Height;
+		dst.Dirty = true;
+	}
+	if(src.IsDirty || dst.Dirty) {
+		memcpy(dst.Buffer.data(), src.Buffer, src.Width * src.Height * sizeof(uint32_t));
+		dst.Dirty = true;
+	}
+}
+
 void SdlRenderer::Render(RenderSurfaceInfo& emuHud, RenderSurfaceInfo& scriptHud)
 {
-	SDL_Event evt;
-	while(SDL_PollEvent(&evt)) {
-		if(evt.type == SDL_QUIT && _onQuit) {
-			_onQuit();
+	{
+		auto lock = _hudLock.AcquireSafe();
+		CopyHud(_emuHudCopy, emuHud);
+		CopyHud(_scriptHudCopy, scriptHud);
+		_presentPending = true;
+	}
+	if(_onFrameReady) {
+		_onFrameReady();
+	}
+}
+
+void SdlRenderer::Present()
+{
+	{
+		auto lock = _hudLock.AcquireSafe();
+		if(!_presentPending) {
 			return;
 		}
+		_presentPending = false;
 	}
 
 	SetScreenSize(_requiredWidth, _requiredHeight);
 	if(!_sdlRenderer || !_sdlTexture) {
 		return;
 	}
-
-	bool needUpdate = false;
-	needUpdate |= UpdateHudSize(_emuHud, emuHud.Width, emuHud.Height);
-	needUpdate |= UpdateHudSize(_scriptHud, scriptHud.Width, scriptHud.Height);
 
 	if(SDL_RenderClear(_sdlRenderer) != 0) {
 		LogSdlError("SDL_RenderClear failed");
@@ -297,11 +302,19 @@ void SdlRenderer::Render(RenderSurfaceInfo& emuHud, RenderSurfaceInfo& scriptHud
 	
 	SDL_UnlockTexture(_sdlTexture);
 
-	if(needUpdate || emuHud.IsDirty) {
-		UpdateHudTexture(_emuHud, emuHud.Buffer);
-	}
-	if(needUpdate || scriptHud.IsDirty) {
-		UpdateHudTexture(_scriptHud, scriptHud.Buffer);
+	{
+		auto lock = _hudLock.AcquireSafe();
+		bool needUpdate = false;
+		needUpdate |= UpdateHudSize(_emuHud, _emuHudCopy.Width, _emuHudCopy.Height);
+		needUpdate |= UpdateHudSize(_scriptHud, _scriptHudCopy.Width, _scriptHudCopy.Height);
+		if(needUpdate || _emuHudCopy.Dirty) {
+			UpdateHudTexture(_emuHud, _emuHudCopy.Buffer.data());
+		}
+		if(needUpdate || _scriptHudCopy.Dirty) {
+			UpdateHudTexture(_scriptHud, _scriptHudCopy.Buffer.data());
+		}
+		_emuHudCopy.Dirty = false;
+		_scriptHudCopy.Dirty = false;
 	}
 
 	SDL_Rect source = {0, 0, (int)_frameWidth, (int)_frameHeight };

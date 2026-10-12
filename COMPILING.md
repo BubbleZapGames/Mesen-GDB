@@ -38,6 +38,3 @@ mesen-gdb against it:
     make SDL2_PREFIX=~/.local/opt/sdl2-static
 
 The result is `bin/osx-arm64/Release/mesen-gdb` on Apple Silicon.
-
-The game window does not work on macOS yet (SDL creates it on the emulator's render
-thread, and macOS only allows windows on the main thread): run with `--headless`.

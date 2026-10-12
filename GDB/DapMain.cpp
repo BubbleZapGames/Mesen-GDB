@@ -7,6 +7,9 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <future>
+#include <mutex>
+#include <condition_variable>
 #include <cstring>
 #include <cstdlib>
 
@@ -63,14 +66,22 @@ static void signalHandler(int sig)
 
 // Frontend - the game window, sound and keyboard of a session that is not
 // headless. A HEADLESS=true build has none of them, and no SDL.
+//
+// SDL lives on the main thread, which macOS requires of windows and their
+// events: Start, Run and Stop are called there, and Run runs the session (the
+// CLI or the DAP server) on a worker thread meanwhile. The session calls
+// Attach and Detach, which Run carries out on the main thread.
 class Frontend
 {
 public:
 #ifdef MESEN_HEADLESS
 	static constexpr bool Available = false;
-	bool Start(Emulator*) { return false; }
+	bool Start() { return false; }
 	const char* Error() { return "built with HEADLESS=true"; }
+	void Attach(Emulator*) {}
+	void Detach() {}
 	void OnWindowClosed(std::function<void()>) {}
+	int Run(std::function<int()> session) { return session(); }
 	void Stop() {}
 #else
 	static constexpr bool Available = true;
@@ -78,29 +89,91 @@ public:
 	~Frontend() { Stop(); }
 
 	// False when SDL cannot start (no display); Error() says why.
-	bool Start(Emulator* emu)
+	bool Start()
 	{
 		// mesen-gdb has its own main(), not SDL's (SDL_MAIN_HANDLED on Windows).
 		SDL_SetMainReady();
 		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) return false;
 		_sdl = true;
-		_renderer.reset(new SdlRenderer(emu, nullptr));
-		_sound.reset(new SdlSoundManager(emu));
-#ifdef __linux__
-		_keys.reset(new LinuxKeyManager(emu));
-		KeyManager::RegisterKeyManager(_keys.get());
-#endif
 		return true;
 	}
 
 	const char* Error() { return SDL_GetError(); }
 
-	void OnWindowClosed(std::function<void()> callback)
+	// The window, sound and keyboard for emu. The window opens with the first
+	// frame.
+	void Attach(Emulator* emu)
 	{
-		if(_renderer) _renderer->SetQuitCallback(std::move(callback));
+		RunOnMain([this, emu]() {
+			_renderer.reset(new SdlRenderer(emu, nullptr));
+			_renderer->SetFrameReadyCallback([this]() { FrameReady(); });
+			_sound.reset(new SdlSoundManager(emu));
+#ifdef __linux__
+			_keys.reset(new LinuxKeyManager(emu));
+			KeyManager::RegisterKeyManager(_keys.get());
+#endif
+		});
 	}
 
-	// After the emulator is released.
+	// After the emulator is released; the window-closed callback is dropped
+	// first, since what it refers to may be about to go.
+	void Detach()
+	{
+		{
+			std::lock_guard<std::mutex> guard(_lock);
+			_onClosed = nullptr;
+		}
+		RunOnMain([this]() {
+			_renderer.reset();
+			_sound.reset();
+#ifdef __linux__
+			_keys.reset();
+#endif
+		});
+	}
+
+	// Called on the main thread when the window is closed.
+	void OnWindowClosed(std::function<void()> callback)
+	{
+		std::lock_guard<std::mutex> guard(_lock);
+		_onClosed = std::move(callback);
+	}
+
+	// Run session on a worker thread; meanwhile handle the window's events,
+	// draw its frames and carry out Attach/Detach. Returns session's result.
+	int Run(std::function<int()> session)
+	{
+		int result = 0;
+		bool done = false;
+		std::thread worker([&]() {
+			result = session();
+			std::lock_guard<std::mutex> guard(_lock);
+			done = true;
+			_wake.notify_all();
+		});
+		while(true) {
+			std::vector<std::function<void()>> tasks;
+			std::function<void()> onClosed;
+			{
+				std::unique_lock<std::mutex> lock(_lock);
+				_wake.wait_for(lock, std::chrono::milliseconds(16), [&]() { return done || _frameReady || !_tasks.empty(); });
+				if(done) break;
+				tasks.swap(_tasks);
+				_frameReady = false;
+				onClosed = _onClosed;
+			}
+			for(auto& task : tasks) task();
+
+			SDL_Event evt;
+			while(SDL_PollEvent(&evt)) {
+				if(evt.type == SDL_QUIT && onClosed) onClosed();
+			}
+			if(_renderer) _renderer->Present();
+		}
+		worker.join();
+		return result;
+	}
+
 	void Stop()
 	{
 		_renderer.reset();
@@ -119,6 +192,32 @@ private:
 #ifdef __linux__
 	std::unique_ptr<LinuxKeyManager> _keys;
 #endif
+
+	std::mutex _lock;   // what follows
+	std::condition_variable _wake;
+	std::vector<std::function<void()>> _tasks;
+	bool _frameReady = false;
+	std::function<void()> _onClosed;
+
+	void FrameReady()
+	{
+		std::lock_guard<std::mutex> guard(_lock);
+		_frameReady = true;
+		_wake.notify_all();
+	}
+
+	// Run task on the main thread (in Run's loop) and wait for it.
+	void RunOnMain(std::function<void()> task)
+	{
+		std::promise<void> finished;
+		std::future<void> wait = finished.get_future();
+		{
+			std::lock_guard<std::mutex> guard(_lock);
+			_tasks.push_back([&]() { task(); finished.set_value(); });
+		}
+		_wake.notify_all();
+		wait.wait();
+	}
 #endif
 };
 
@@ -302,12 +401,10 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 }
 
 // --- DAP mode ---
-static int RunDapMode(CliArgs& args)
+// dapOutput is the real stdout (main takes it before SDL starts); frontend is
+// null when headless.
+static int RunDapMode(CliArgs& args, FILE* dapOutput, Frontend* frontend)
 {
-	// Redirect stdout → stderr before anything else runs, so emulator and SDL
-	// chatter can't corrupt the DAP stream. The real stdout goes to DapServer.
-	FILE* dapOutput = CliPlatform::TakeStdout();
-
 	FolderUtilities::SetHomeFolder(CliPlatform::MesenHome());
 
 	// Create and initialize emulator
@@ -317,15 +414,9 @@ static int RunDapMode(CliArgs& args)
 
 	// Video/audio/input. --dap on its own shows the game window and plays
 	// sound while debugging; pass --headless to run without one.
-	Frontend frontend;
-	if(!args.headless && !frontend.Start(emu.get())) {
-		// No display available — keep the debug session usable rather than
-		// failing the launch outright.
-		fprintf(stderr, "[DAP] SDL_Init failed (%s), continuing without video/audio.\n", frontend.Error());
-		args.headless = true;
-	}
-
-	if(args.headless) {
+	if(frontend) {
+		frontend->Attach(emu.get());
+	} else {
 		// Max speed, but keep rendering every frame so state reads at a
 		// breakpoint reflect the current PPU output.
 		emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
@@ -355,10 +446,12 @@ static int RunDapMode(CliArgs& args)
 
 	// Closing the game window ends the debug session. VSCode replies to
 	// the terminated event with a disconnect, which unblocks the reader.
-	frontend.OnWindowClosed([&server]() {
-		fprintf(stderr, "[DAP] Window closed, terminating debug session.\n");
-		server.SendTerminatedEvent();
-	});
+	if(frontend) {
+		frontend->OnWindowClosed([&server]() {
+			fprintf(stderr, "[DAP] Window closed, terminating debug session.\n");
+			server.SendTerminatedEvent();
+		});
+	}
 
 	server.Run();
 
@@ -367,13 +460,14 @@ static int RunDapMode(CliArgs& args)
 	// Cleanup
 	emu->Stop(true);
 	emu->Release();
-	frontend.Stop();
+	if(frontend) frontend->Detach();
 
 	return 0;
 }
 
 // --- CLI/Batch mode ---
-static int RunCliMode(CliArgs& args)
+// frontend is null when headless.
+static int RunCliMode(CliArgs& args, Frontend* frontend)
 {
 	// Symbols, so an address anywhere - these options, the CLI's commands -
 	// can be a name.
@@ -431,14 +525,9 @@ static int RunCliMode(CliArgs& args)
 	emu->Initialize(false);  // no shortcut keys
 	KeyManager::SetSettings(emu->GetSettings());
 
-	// 2. Set up SDL if not headless
-	Frontend frontend;
-	if(!args.headless) {
-		if(!frontend.Start(emu.get())) {
-			fprintf(stderr, "SDL_Init failed: %s\n", frontend.Error());
-			emu->Release();
-			return 2;
-		}
+	// 2. The game window, unless headless
+	if(frontend) {
+		frontend->Attach(emu.get());
 	} else {
 		// Headless: max speed. Keep rendering every frame anyway so
 		// breakpoint screenshots reflect the current PPU state instead of
@@ -452,10 +541,12 @@ static int RunCliMode(CliArgs& args)
 	g_listener = listener;
 	emu->GetNotificationManager()->RegisterNotificationListener(listener);
 
-	frontend.OnWindowClosed([listener]() {
-		fprintf(stderr, "Window closed, exiting.\n");
-		listener->RequestQuit();
-	});
+	if(frontend) {
+		frontend->OnWindowClosed([listener]() {
+			fprintf(stderr, "Window closed, exiting.\n");
+			listener->RequestQuit();
+		});
+	}
 
 	// 4. Enable ALL debugger flags before LoadRom — only the ones for the loaded
 	//    console will actually matter. This avoids needing to know console type upfront.
@@ -494,7 +585,7 @@ static int RunCliMode(CliArgs& args)
 	if(!emu->LoadRom((VirtualFile)args.romPath, VirtualFile())) {
 		fprintf(stderr, "Failed to load ROM: %s\n", args.romPath.c_str());
 		emu->Release();
-		frontend.Stop();
+		if(frontend) frontend->Detach();
 		return 2;
 	}
 
@@ -657,7 +748,7 @@ static int RunCliMode(CliArgs& args)
 	g_listener.reset();
 	emu->Stop(false);
 	emu->Release();
-	frontend.Stop();
+	if(frontend) frontend->Detach();
 
 	return exitCode;
 }
@@ -684,17 +775,39 @@ int main(int argc, char* argv[])
 	// 1. --dap flag → DAP mode
 	// 2. Everything else → CLI mode (default, requires ROM)
 
+	FILE* dapOutput = nullptr;
 	if(args.dapMode) {
 		// In DAP mode, stdout is reserved for DAP JSON protocol.
 		// Disable Mesen's diagnostic output to stdout.
 		MessageManager::SetOptions(false, false);
-		return RunDapMode(args);
-	}
-
-	if(args.romPath.empty()) {
+		// Redirect stdout → stderr before anything else runs, so emulator and
+		// SDL chatter can't corrupt the DAP stream. The real stdout goes to
+		// DapServer.
+		dapOutput = CliPlatform::TakeStdout();
+	} else if(args.romPath.empty()) {
 		fprintf(stderr, "Error: ROM path is required.\n");
 		PrintUsage(argv[0]);
 		return 2;
 	}
-	return RunCliMode(args);
+
+	// SDL starts here, on the main thread, which then keeps the window while
+	// the session runs on a worker thread (Frontend::Run).
+	Frontend frontend;
+	if(!args.headless && !frontend.Start()) {
+		if(!args.dapMode) {
+			fprintf(stderr, "SDL_Init failed: %s\n", frontend.Error());
+			return 2;
+		}
+		// No display available — keep the debug session usable rather than
+		// failing the launch outright.
+		fprintf(stderr, "[DAP] SDL_Init failed (%s), continuing without video/audio.\n", frontend.Error());
+		args.headless = true;
+	}
+	Frontend* window = args.headless ? nullptr : &frontend;
+	auto session = [&]() {
+		return args.dapMode ? RunDapMode(args, dapOutput, window) : RunCliMode(args, window);
+	};
+	int result = window ? frontend.Run(session) : session();
+	frontend.Stop();
+	return result;
 }
