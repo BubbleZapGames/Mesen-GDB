@@ -148,6 +148,16 @@ void SdlRenderer::OnRendererThreadStarted()
 {
 	//SDL stops working if the rendering moves to a new thread
 	//Reset everything to make it work again
+#ifdef _WIN32
+	//A Windows window belongs to the thread that created it and died with
+	//the previous render thread (loading a ROM replaces it): free SDL's side,
+	//and Init() opens a new one that this thread owns and pumps events for.
+	if(_ownsWindow && _sdlWindow) {
+		Cleanup();
+		SDL_DestroyWindow(_sdlWindow);
+		_sdlWindow = nullptr;
+	}
+#endif
 	Reset();
 }
 
