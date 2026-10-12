@@ -165,7 +165,7 @@ endif
 # -MMD -MP: each object's headers go in a .d beside it, so changing a header
 # rebuilds what includes it.
 DEPFLAGS := -MMD -MP
-CXXFLAGS = $(PICFLAG) -Wall --std=c++17 $(MESENFLAGS) $(SDL2INC) -I $(realpath ./) -I $(realpath ./Core) -I $(realpath ./Utilities) -I $(realpath ./Sdl) -I $(realpath ./Linux) -I $(realpath ./MacOS) -I $(realpath ./GDB)
+CXXFLAGS = $(PICFLAG) -Wall --std=c++17 $(MESENFLAGS) $(SDL2INC) -I $(realpath ./) -I $(realpath ./Core) -I $(realpath ./Utilities) -I $(realpath ./Sdl) -I $(realpath ./GDB)
 OBJCXXFLAGS = $(CXXFLAGS)
 CFLAGS = $(PICFLAG) -Wall $(MESENFLAGS)
 
@@ -193,30 +193,9 @@ UTILOBJ := $(call objs,$(UTILSRC))
 SDLSRC := $(shell find Sdl -name '*.cpp')
 SDLOBJ := $(call objs,$(SDLSRC))
 
-ifeq ($(MESENOS),linux)
-	LINUXSRC := $(shell find Linux -name '*.cpp')
-else
-	LINUXSRC :=
-endif
-LINUXOBJ := $(call objs,$(LINUXSRC))
-
-# MacOS/ (upstream's keyboard and gamepad code) is not built: nothing uses it.
-MACOSOBJ :=
-
-ifeq ($(SYSTEM_LIBEVDEV), true)
-	LIBEVDEVLIB := $(shell pkg-config --libs libevdev)
-	LIBEVDEVINC := $(shell pkg-config --cflags libevdev)
-else
-	LIBEVDEVSRC := $(shell find Linux/libevdev -name '*.c')
-	LIBEVDEVOBJ := $(call objs,$(LIBEVDEVSRC))
-	LIBEVDEVINC := -I../
-endif
-
-ifeq ($(MESENOS),linux)
-	X11LIB := -lX11
-else
-	X11LIB :=
-endif
+# Linux/ and MacOS/ (upstream's per-platform keyboard, gamepad and mouse
+# code, with libevdev) are not built: input comes from SDL on every platform
+# (Sdl/SdlKeyManager).
 
 FSLIB := -lstdc++fs
 
@@ -229,9 +208,6 @@ GDBMAINOBJ := $(call objs,$(GDBMAINSRC))
 GDBBIN := mesen-gdb$(EXE)
 
 ifneq ($(MESENOS),linux)
-	LIBEVDEVOBJ :=
-	LIBEVDEVINC :=
-	LIBEVDEVSRC :=
 	FSLIB :=
 endif
 
@@ -251,9 +227,9 @@ $(OBJFOLDER)/%.o: %.mm
 
 -include $(shell find $(OBJFOLDER) -name '*.d' 2>/dev/null)
 
-$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LIBEVDEVOBJ) $(LINUXOBJ) $(MACOSOBJ)
+$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ)
 	mkdir -p $(OUTFOLDER)
-	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(LINUXOBJ) $(MACOSOBJ) $(LIBEVDEVOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(LIBEVDEVLIB) $(X11LIB) $(WINLIBS)
+	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(WINLIBS)
 
 # Unit tests — only links DAP .cpp files (no emulator core needed)
 TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp \

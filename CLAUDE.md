@@ -59,7 +59,14 @@ bin/linux-x64/Release/mesen-gdb --dap
   `input`: a comma list of `a b x y l r select start up down left right`, `none`, or a raw
   number (decimal or `0x` hex) in the `$4218` layout (bit 15 B ... bit 4 R, bits 0-3 ignored). Live
   input, polled once a frame - the alternative to a movie. SNES only; debugger sessions
-  plug a standard controller into empty ports (headless has none by default).
+  plug a standard controller into empty ports (headless has none by default). Once `input`
+  has named a port, it drives that port instead of the keyboard and gamepads.
+
+With a game window, the keyboard and gamepads play (`Sdl/SdlKeyManager`, the same on every
+platform), with Mesen's default layouts when the settings have none: controller 1 on the arrows
+and S A X Z (A B X Y), Q W (L R), E D (Select Start) by key position, and on the first gamepad
+(buttons by position, d-pad, left stick); controller 2 on the second gamepad.
+`tests/roms/pad/pad.sfc` shows controller 1 (`PAD`, and a red screen while a button is held).
 - `movie <file.mmo>` / `movie stop` — play a movie inside the session (power cycle, then its
   embedded `SaveState.mss` if the ROM's SHA1 matches). Breakpoints are re-applied after.
   It (and `--movie` at startup) waits for the power cycle's re-break before touching the
@@ -139,9 +146,8 @@ GDB/               The custom code in this fork (~1900 lines, 9 files)
   cli_notification.h   Notification listener bridging emulator events to CLI
   console_info.h   Console/CPU type detection and memory region mapping
 
-Sdl/               SDL2 rendering and audio (used for non-headless mode)
-Linux/             Linux-specific input handling (libevdev bundled)
-MacOS/             macOS-specific code (Objective-C++)
+Sdl/               SDL2 window, audio, keyboard and gamepads (not used with --headless)
+Linux/, MacOS/     Upstream's per-platform input code: not built (SDL handles input)
 Utilities/         Shared utilities (VirtualFile, FolderUtilities, CRC32, etc.)
 ```
 

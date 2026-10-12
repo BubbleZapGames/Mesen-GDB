@@ -41,9 +41,7 @@
 #include "Core/Debugger/DAP/DapServer.h"
 #include "Core/Debugger/DAP/DapNotificationListener.h"
 
-#ifdef __linux__
-#include "Linux/LinuxKeyManager.h"
-#endif
+#include "Sdl/SdlKeyManager.h"
 #include "Sdl/SdlRenderer.h"
 #include "Sdl/SdlSoundManager.h"
 
@@ -62,8 +60,53 @@ static void signalHandler(int sig)
 	}
 }
 
-// Frontend - the game window, sound and keyboard of a session that is not
-// headless (--headless).
+// The SNES controllers' keys when the settings have none, as Mesen's UI
+// presets them: port 1 on the keyboard (arrows; S A X Z for A B X Y, Q W for
+// L R, E D for Select Start) and the first gamepad (buttons by position,
+// d-pad, left stick), port 2 on the second gamepad.
+static KeyMapping MakeKeyMapping(std::initializer_list<const char*> names)
+{
+	// In KeyMapping's order: A B X Y L R Up Down Left Right Start Select.
+	uint16_t codes[12] = {};
+	int i = 0;
+	for(const char* name : names) codes[i++] = *name ? KeyManager::GetKeyCode(name) : 0;
+	KeyMapping m;
+	m.A = codes[0]; m.B = codes[1]; m.X = codes[2]; m.Y = codes[3]; m.L = codes[4]; m.R = codes[5];
+	m.Up = codes[6]; m.Down = codes[7]; m.Left = codes[8]; m.Right = codes[9];
+	m.Start = codes[10]; m.Select = codes[11];
+	return m;
+}
+
+static KeyMapping PadButtons(const std::string& pad)
+{
+	return MakeKeyMapping({ (pad + "B").c_str(), (pad + "A").c_str(), (pad + "Y").c_str(), (pad + "X").c_str(),
+		(pad + "L1").c_str(), (pad + "R1").c_str(), (pad + "Up").c_str(), (pad + "Down").c_str(),
+		(pad + "Left").c_str(), (pad + "Right").c_str(), (pad + "Start").c_str(), (pad + "Select").c_str() });
+}
+
+static KeyMapping PadStick(const std::string& pad)
+{
+	return MakeKeyMapping({ "", "", "", "", "", "",
+		(pad + "Y-").c_str(), (pad + "Y+").c_str(), (pad + "X-").c_str(), (pad + "X+").c_str(), "", "" });
+}
+
+static void ApplyDefaultKeys(SnesConfig& snes)
+{
+	// GetKeyMappingArray lists the mappings that have a key set.
+	if(snes.Port1.Keys.GetKeyMappingArray().empty()) {
+		snes.Port1.Keys.Mapping1 = MakeKeyMapping({ "S", "A", "X", "Z", "Q", "W",
+			"Up Arrow", "Down Arrow", "Left Arrow", "Right Arrow", "D", "E" });
+		snes.Port1.Keys.Mapping2 = PadButtons("Pad1 ");
+		snes.Port1.Keys.Mapping3 = PadStick("Pad1 ");
+	}
+	if(snes.Port2.Keys.GetKeyMappingArray().empty()) {
+		snes.Port2.Keys.Mapping1 = PadButtons("Pad2 ");
+		snes.Port2.Keys.Mapping2 = PadStick("Pad2 ");
+	}
+}
+
+// Frontend - the game window, sound, keyboard and gamepads of a session that
+// is not headless (--headless).
 //
 // SDL lives on the main thread, which macOS requires of windows and their
 // events: Start, Run and Stop are called there, and Run runs the session (the
@@ -94,10 +137,15 @@ public:
 			_renderer.reset(new SdlRenderer(emu, nullptr));
 			_renderer->SetFrameReadyCallback([this]() { FrameReady(); });
 			_sound.reset(new SdlSoundManager(emu));
-#ifdef __linux__
-			_keys.reset(new LinuxKeyManager(emu));
+			_keys.reset(new SdlKeyManager());
 			KeyManager::RegisterKeyManager(_keys.get());
-#endif
+
+			// Something to play with: a controller in each empty SNES port,
+			// with the default keys.
+			SnesConfig& snes = emu->GetSettings()->GetSnesConfig();
+			if(snes.Port1.Type == ControllerType::None) snes.Port1.Type = ControllerType::SnesController;
+			if(snes.Port2.Type == ControllerType::None) snes.Port2.Type = ControllerType::SnesController;
+			ApplyDefaultKeys(snes);
 		});
 	}
 
@@ -112,9 +160,8 @@ public:
 		RunOnMain([this]() {
 			_renderer.reset();
 			_sound.reset();
-#ifdef __linux__
+			KeyManager::RegisterKeyManager(nullptr);
 			_keys.reset();
-#endif
 		});
 	}
 
@@ -153,6 +200,7 @@ public:
 			SDL_Event evt;
 			while(SDL_PollEvent(&evt)) {
 				if(evt.type == SDL_QUIT && onClosed) onClosed();
+				if(_keys) _keys->HandleEvent(evt);
 			}
 			if(_renderer) _renderer->Present();
 		}
@@ -164,9 +212,8 @@ public:
 	{
 		_renderer.reset();
 		_sound.reset();
-#ifdef __linux__
+		KeyManager::RegisterKeyManager(nullptr);
 		_keys.reset();
-#endif
 		if(_sdl) SDL_Quit();
 		_sdl = false;
 	}
@@ -175,9 +222,7 @@ private:
 	bool _sdl = false;
 	std::unique_ptr<SdlRenderer> _renderer;
 	std::unique_ptr<SdlSoundManager> _sound;
-#ifdef __linux__
-	std::unique_ptr<LinuxKeyManager> _keys;
-#endif
+	std::unique_ptr<SdlKeyManager> _keys;
 
 	std::mutex _lock;   // what follows
 	std::condition_variable _wake;
