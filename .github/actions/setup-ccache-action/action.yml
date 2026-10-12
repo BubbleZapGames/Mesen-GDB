@@ -1,15 +1,15 @@
 name: 'Setup CCache'
+# The job puts ccache in front of its compilers itself (CXX="ccache ...").
 inputs:
-  ccache-path:  # id of input
+  key:
+    description: 'Cache key, one per job'
     required: true
-    default: '/usr/lib/ccache'
 runs:
   using: "composite"
   steps:
       - name: Setup CCache
         shell: bash
         run: |
-          eval $(printf 'PATH=${{ inputs.ccache-path }}:%s\n' "$PATH" | tee -a "$GITHUB_ENV")
           cat <<EOF >>"$GITHUB_ENV"
           CCACHE_MAXSIZE=500M
           CCACHE_DIR=$HOME/.cache/ccache
@@ -18,7 +18,7 @@ runs:
       - name: Cache compilation
         uses: actions/cache@v4
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.compiler }}-${{ matrix.platform.os }}
+          path: ~/.cache/ccache
+          key: ${{ inputs.key }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ matrix.compiler }}
+            ${{ inputs.key }}-

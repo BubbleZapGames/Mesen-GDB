@@ -176,3 +176,7 @@ bin/linux-x64/Release/mesen-gdb test.sfc --batch --headless \
 ```
 
 The R65 compiler's end-to-end tests use this binary to verify generated code.
+
+CI (`.github/workflows/build.yml`, on every push and pull request) builds the Linux and Windows SDL
+binaries on Ubuntu 24.04, runs `make test` for both (Windows under Wine) and `pytest python/tests`,
+and uploads `mesen-gdb` and `mesen-gdb.exe` as artifacts.
