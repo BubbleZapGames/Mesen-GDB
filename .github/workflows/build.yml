@@ -9,6 +9,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only by default; only the release job writes.
+permissions:
+  contents: read
+
 env:
   SDL_VERSION: 2.30.12
   # SDL2-devel-2.30.12-mingw.tar.gz from SDL's GitHub release. SDL publishes
@@ -113,3 +117,35 @@ jobs:
         with:
           name: mesen-gdb-windows-x64
           path: bin/windows-x64/Release/mesen-gdb.exe
+
+  # Pushing a v* tag (git tag v1.2.0 && git push origin v1.2.0) publishes
+  # both binaries as a GitHub Release once the builds and tests pass. A tag
+  # with a hyphen (v1.2.0-rc1) makes a prerelease.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Artifacts lose the executable bit; a tarball keeps it for Linux.
+      - name: Package
+        run: |
+          mkdir dist
+          chmod +x artifacts/mesen-gdb-linux-x64/mesen-gdb
+          tar -czf dist/mesen-gdb-$GITHUB_REF_NAME-linux-x64.tar.gz -C artifacts/mesen-gdb-linux-x64 mesen-gdb
+          (cd artifacts/mesen-gdb-windows-x64 && zip -q ../../dist/mesen-gdb-$GITHUB_REF_NAME-windows-x64.zip mesen-gdb.exe)
+          (cd dist && sha256sum * > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=$([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease || true)
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $prerelease \
+            --notes "The Linux build needs SDL2 installed (libsdl2-2.0-0 on Debian/Ubuntu). The Windows build is a single self-contained .exe."
