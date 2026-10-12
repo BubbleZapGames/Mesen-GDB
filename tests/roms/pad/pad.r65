@@ -1,0 +1,48 @@
+// pad - a test ROM for mesen-gdb's input: shows controller 1.
+//
+// Every frame it copies controller 1, as the SNES auto-reads it ($4218-9:
+// bit 15 B, 14 Y, 13 Select, 12 Start, 11-8 Up Down Left Right, 7 A, 6 X,
+// 5 L, 4 R), into PAD, and from the next frame shows the screen red while
+// any button is held, green otherwise.
+
+#[snesrom(name="MESEN-GDB PAD")]
+
+#[stack(0x0100, 0x01FF)]
+
+include!("65816.r65")
+include!("sneslib.r65")
+
+#[bank(0)]
+
+#[lowram]
+static mut PAD: u16;
+
+#[entry]
+fn init_reset() -> ! {
+    snes_init();
+    main();
+}
+
+#[interrupt(nmi)]
+fn nmi_handler() {
+    clear_nmi!()
+}
+
+fn main() -> ! {
+    // snes_init enables the NMI and the auto joypad read.
+    set_backdrop!(Color::rgb!(0, 31, 0));
+    set_brightness!(15);
+    loop {
+        wait_nmi!();
+        // In vblank: show the last frame's PAD.
+        if PAD != 0 {
+            set_backdrop!(Color::rgb!(31, 0, 0));
+        } else {
+            set_backdrop!(Color::rgb!(0, 31, 0));
+        }
+        // The auto read starts a little into vblank, so read the pad once
+        // vblank is over, when it is certainly done.
+        while HVBJOY & 0x80 != 0 {}
+        PAD = ((JOY1H as u16) << 8) | (JOY1L as u16);
+    }
+}
