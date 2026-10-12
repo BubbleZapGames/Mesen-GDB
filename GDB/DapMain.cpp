@@ -1,13 +1,12 @@
 #include <cstdio>
 #include <csignal>
-#include <unistd.h>
-#include <fcntl.h>
 #include <atomic>
 #include <string>
 #include <thread>
 #include <chrono>
 #include <vector>
 #include <memory>
+#include <functional>
 #include <cstring>
 #include <cstdlib>
 
@@ -34,16 +33,18 @@
 #include "batch_runner.h"
 #include "console_info.h"
 #include "bus_logging.h"
+#include "cli_platform.h"
 
 #include "Core/Debugger/DAP/DapServer.h"
 #include "Core/Debugger/DAP/DapNotificationListener.h"
 
-#ifndef __APPLE__
+#ifndef MESEN_HEADLESS
+#ifdef __linux__
 #include "Linux/LinuxKeyManager.h"
 #endif
-
 #include "Sdl/SdlRenderer.h"
 #include "Sdl/SdlSoundManager.h"
+#endif
 
 static std::atomic<bool> g_running{true};
 static std::shared_ptr<CliNotificationListener> g_listener;
@@ -59,6 +60,67 @@ static void signalHandler(int sig)
 		else listener->Interrupt();
 	}
 }
+
+// Frontend - the game window, sound and keyboard of a session that is not
+// headless. A HEADLESS=true build has none of them, and no SDL.
+class Frontend
+{
+public:
+#ifdef MESEN_HEADLESS
+	static constexpr bool Available = false;
+	bool Start(Emulator*) { return false; }
+	const char* Error() { return "built with HEADLESS=true"; }
+	void OnWindowClosed(std::function<void()>) {}
+	void Stop() {}
+#else
+	static constexpr bool Available = true;
+
+	~Frontend() { Stop(); }
+
+	// False when SDL cannot start (no display); Error() says why.
+	bool Start(Emulator* emu)
+	{
+		// mesen-gdb has its own main(), not SDL's (SDL_MAIN_HANDLED on Windows).
+		SDL_SetMainReady();
+		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) return false;
+		_sdl = true;
+		_renderer.reset(new SdlRenderer(emu, nullptr));
+		_sound.reset(new SdlSoundManager(emu));
+#ifdef __linux__
+		_keys.reset(new LinuxKeyManager(emu));
+		KeyManager::RegisterKeyManager(_keys.get());
+#endif
+		return true;
+	}
+
+	const char* Error() { return SDL_GetError(); }
+
+	void OnWindowClosed(std::function<void()> callback)
+	{
+		if(_renderer) _renderer->SetQuitCallback(std::move(callback));
+	}
+
+	// After the emulator is released.
+	void Stop()
+	{
+		_renderer.reset();
+		_sound.reset();
+#ifdef __linux__
+		_keys.reset();
+#endif
+		if(_sdl) SDL_Quit();
+		_sdl = false;
+	}
+
+private:
+	bool _sdl = false;
+	std::unique_ptr<SdlRenderer> _renderer;
+	std::unique_ptr<SdlSoundManager> _sound;
+#ifdef __linux__
+	std::unique_ptr<LinuxKeyManager> _keys;
+#endif
+#endif
+};
 
 struct CliArgs {
 	std::string romPath;
@@ -244,18 +306,9 @@ static int RunDapMode(CliArgs& args)
 {
 	// Redirect stdout → stderr before anything else runs, so emulator and SDL
 	// chatter can't corrupt the DAP stream. The real stdout goes to DapServer.
-	fflush(stdout);
-	int savedFd = dup(fileno(stdout));
-	dup2(fileno(stderr), fileno(stdout));
-	FILE* dapOutput = fdopen(savedFd, "w");
+	FILE* dapOutput = CliPlatform::TakeStdout();
 
-	// Set home folder
-	{
-		const char* home = getenv("MESEN_HOME");
-		if(!home) home = getenv("HOME");
-		std::string mesenHome = std::string(home ? home : "/tmp") + "/.mesen-dap";
-		FolderUtilities::SetHomeFolder(mesenHome);
-	}
+	FolderUtilities::SetHomeFolder(CliPlatform::MesenHome());
 
 	// Create and initialize emulator
 	std::unique_ptr<Emulator> emu(new Emulator());
@@ -264,28 +317,12 @@ static int RunDapMode(CliArgs& args)
 
 	// Video/audio/input. --dap on its own shows the game window and plays
 	// sound while debugging; pass --headless to run without one.
-	SdlRenderer* renderer = nullptr;
-	SdlSoundManager* soundManager = nullptr;
-#ifndef __APPLE__
-	LinuxKeyManager* keyManager = nullptr;
-#endif
-	bool sdlInitialized = false;
-
-	if(!args.headless) {
-		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
-			// No display available — keep the debug session usable rather than
-			// failing the launch outright.
-			fprintf(stderr, "[DAP] SDL_Init failed (%s), continuing without video/audio.\n", SDL_GetError());
-			args.headless = true;
-		} else {
-			sdlInitialized = true;
-			renderer = new SdlRenderer(emu.get(), nullptr);
-			soundManager = new SdlSoundManager(emu.get());
-#ifndef __APPLE__
-			keyManager = new LinuxKeyManager(emu.get());
-			KeyManager::RegisterKeyManager(keyManager);
-#endif
-		}
+	Frontend frontend;
+	if(!args.headless && !frontend.Start(emu.get())) {
+		// No display available — keep the debug session usable rather than
+		// failing the launch outright.
+		fprintf(stderr, "[DAP] SDL_Init failed (%s), continuing without video/audio.\n", frontend.Error());
+		args.headless = true;
 	}
 
 	if(args.headless) {
@@ -316,14 +353,12 @@ static int RunDapMode(CliArgs& args)
 	// ROM loading is handled by the DAP launch request.
 	DapServer server(emu.get(), dapOutput);
 
-	if(renderer) {
-		// Closing the game window ends the debug session. VSCode replies to
-		// the terminated event with a disconnect, which unblocks the reader.
-		renderer->SetQuitCallback([&server]() {
-			fprintf(stderr, "[DAP] Window closed, terminating debug session.\n");
-			server.SendTerminatedEvent();
-		});
-	}
+	// Closing the game window ends the debug session. VSCode replies to
+	// the terminated event with a disconnect, which unblocks the reader.
+	frontend.OnWindowClosed([&server]() {
+		fprintf(stderr, "[DAP] Window closed, terminating debug session.\n");
+		server.SendTerminatedEvent();
+	});
 
 	server.Run();
 
@@ -332,15 +367,7 @@ static int RunDapMode(CliArgs& args)
 	// Cleanup
 	emu->Stop(true);
 	emu->Release();
-
-	delete renderer;
-	delete soundManager;
-#ifndef __APPLE__
-	delete keyManager;
-#endif
-	if(sdlInitialized) {
-		SDL_Quit();
-	}
+	frontend.Stop();
 
 	return 0;
 }
@@ -384,31 +411,20 @@ static int RunCliMode(CliArgs& args)
 		}
 		// The script is the session's stdin; RAM is pinned unless asked
 		// otherwise, so a test runs the same every time.
-		int fd = open(args.scriptPath.c_str(), O_RDONLY);
-		if(fd < 0) {
+		if(!CliPlatform::StdinFromFile(args.scriptPath)) {
 			fprintf(stderr, "Error: cannot read script %s\n", args.scriptPath.c_str());
 			return 2;
 		}
-		dup2(fd, STDIN_FILENO);
-		close(fd);
 		if(args.ramInit.empty()) args.ramInit = "zeros";
 	}
 
 	FILE* jsonOut = nullptr;
 	if((args.jsonOutput || !args.scriptPath.empty()) && !args.batchMode) {
-		fflush(stdout);
-		int fd = dup(fileno(stdout));
-		dup2(fileno(stderr), fileno(stdout));
-		jsonOut = fdopen(fd, "w");
+		jsonOut = CliPlatform::TakeStdout();
 	}
 
 	// 0. Set home folder (Mesen needs this for save states, settings, etc.)
-	{
-		const char* home = getenv("MESEN_HOME");
-		if(!home) home = getenv("HOME");
-		std::string mesenHome = std::string(home ? home : "/tmp") + "/.mesen-dap";
-		FolderUtilities::SetHomeFolder(mesenHome);
-	}
+	FolderUtilities::SetHomeFolder(CliPlatform::MesenHome());
 
 	// 1. Create and initialize emulator
 	std::unique_ptr<Emulator> emu(new Emulator());
@@ -416,25 +432,13 @@ static int RunCliMode(CliArgs& args)
 	KeyManager::SetSettings(emu->GetSettings());
 
 	// 2. Set up SDL if not headless
-	SdlRenderer* renderer = nullptr;
-	SdlSoundManager* soundManager = nullptr;
-#ifndef __APPLE__
-	LinuxKeyManager* keyManager = nullptr;
-#endif
-
+	Frontend frontend;
 	if(!args.headless) {
-		if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
-			fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+		if(!frontend.Start(emu.get())) {
+			fprintf(stderr, "SDL_Init failed: %s\n", frontend.Error());
 			emu->Release();
 			return 2;
 		}
-
-		renderer = new SdlRenderer(emu.get(), nullptr);
-		soundManager = new SdlSoundManager(emu.get());
-#ifndef __APPLE__
-		keyManager = new LinuxKeyManager(emu.get());
-		KeyManager::RegisterKeyManager(keyManager);
-#endif
 	} else {
 		// Headless: max speed. Keep rendering every frame anyway so
 		// breakpoint screenshots reflect the current PPU state instead of
@@ -448,12 +452,10 @@ static int RunCliMode(CliArgs& args)
 	g_listener = listener;
 	emu->GetNotificationManager()->RegisterNotificationListener(listener);
 
-	if(renderer) {
-		renderer->SetQuitCallback([listener]() {
-			fprintf(stderr, "Window closed, exiting.\n");
-			listener->RequestQuit();
-		});
-	}
+	frontend.OnWindowClosed([listener]() {
+		fprintf(stderr, "Window closed, exiting.\n");
+		listener->RequestQuit();
+	});
 
 	// 4. Enable ALL debugger flags before LoadRom — only the ones for the loaded
 	//    console will actually matter. This avoids needing to know console type upfront.
@@ -492,12 +494,7 @@ static int RunCliMode(CliArgs& args)
 	if(!emu->LoadRom((VirtualFile)args.romPath, VirtualFile())) {
 		fprintf(stderr, "Failed to load ROM: %s\n", args.romPath.c_str());
 		emu->Release();
-		delete renderer;
-		delete soundManager;
-#ifndef __APPLE__
-		delete keyManager;
-#endif
-		if(!args.headless) SDL_Quit();
+		frontend.Stop();
 		return 2;
 	}
 
@@ -660,16 +657,7 @@ static int RunCliMode(CliArgs& args)
 	g_listener.reset();
 	emu->Stop(false);
 	emu->Release();
-
-	delete renderer;
-	delete soundManager;
-#ifndef __APPLE__
-	delete keyManager;
-#endif
-
-	if(!args.headless) {
-		SDL_Quit();
-	}
+	frontend.Stop();
 
 	return exitCode;
 }
@@ -683,6 +671,12 @@ int main(int argc, char* argv[])
 
 	signal(SIGINT, signalHandler);
 	signal(SIGTERM, signalHandler);
+	CliPlatform::UseBinaryStdio();
+
+	if(!args.headless && !Frontend::Available) {
+		fprintf(stderr, "Built without a game window (HEADLESS=true): running headless.\n");
+		args.headless = true;
+	}
 
 	MessageManager::SetOptions(false, true);
 

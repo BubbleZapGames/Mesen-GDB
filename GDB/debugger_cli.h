@@ -6,6 +6,7 @@
 #include <cstdio>
 #include "Shared/CpuType.h"
 #include "Shared/SettingTypes.h"
+#include "cli_platform.h"
 
 class Emulator;
 class Debugger;
@@ -47,7 +48,7 @@ private:
 	bool _maxSpeed = false;   // headless/turbo: run every command flat out
 	std::shared_ptr<CliInputProvider> _input;   // the `input` command's controller state
 	bool _replied = false;
-	std::string _inBuf;  // stdin bytes read but not yet consumed as a line
+	StdinLines _stdin;
 	const CliSymbols* _symbols = nullptr;   // names for addresses, when a build left any
 	int _lineNo = 0;          // stdin lines read, for an expect failure's report
 	bool _scripted = false;   // stdin is not a terminal

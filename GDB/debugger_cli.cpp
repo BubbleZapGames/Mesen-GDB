@@ -5,6 +5,7 @@
 #include "cli_symbols.h"
 #include "formatter.h"
 #include "console_info.h"
+#include "cli_platform.h"
 #include "Shared/Emulator.h"
 #include "Shared/EmuSettings.h"
 #include "Shared/DebuggerRequest.h"
@@ -27,10 +28,7 @@
 #include <fstream>
 #include <cstring>
 #include <algorithm>
-#include <poll.h>
 #include "SNES/SnesCpuTypes.h"
-#include <unistd.h>
-#include <cerrno>
 #include <thread>
 #include <chrono>
 
@@ -1377,60 +1375,27 @@ void DebuggerCli::CmdHelp()
 		"Address formats: $1234, 0x1234, 1234, 00:8000, or a symbol (name, name+off)\n";
 }
 
-// ReadLine - the next line of stdin, read from the descriptor directly.
-// Going through std::cin would let its buffer swallow lines that poll()
-// then cannot see, stalling a client that keeps the pipe open and sends
-// one command at a time. Returns false on EOF or a quit request.
+// ReadLine - the next line of stdin. Returns false on EOF or a quit request.
 bool DebuggerCli::ReadLine(std::string& line)
 {
 	while(true) {
-		size_t nl = _inBuf.find('\n');
-		if(nl != std::string::npos) {
-			line = _inBuf.substr(0, nl);
-			if(!line.empty() && line.back() == '\r') line.pop_back();
-			_inBuf.erase(0, nl + 1);
-			return true;
-		}
-		struct pollfd pfd = { STDIN_FILENO, POLLIN, 0 };
-		int ret = poll(&pfd, 1, 100);
+		StdinLines::Status status = _stdin.Next(line, 100);
 		if(_listener->IsQuitRequested()) return false;
-		if(ret < 0) {
-			if(errno == EINTR) continue;
-			return false;
-		}
-		if(ret == 0) continue;
-		char buf[4096];
-		ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
-		if(n < 0) {
-			if(errno == EINTR) continue;
-			return false;
-		}
-		if(n == 0) {
-			// EOF: a last line without its newline still counts.
-			if(_inBuf.empty()) return false;
-			line = _inBuf;
-			_inBuf.clear();
-			return true;
-		}
-		_inBuf.append(buf, (size_t)n);
+		if(status == StdinLines::Status::Line) return true;
+		if(status == StdinLines::Status::End) return false;
 	}
 }
 
 int DebuggerCli::Run()
 {
 	SyncBreakpoints();
-	_scripted = !isatty(STDIN_FILENO);
+	_scripted = !CliPlatform::StdinIsTerminal();
 
 	if(_jsonOutput || !_scriptPath.empty()) {
 		// Keep the real stdout for replies (a script's results); everything
 		// else that writes to fd 1 - Mesen's log, the commands' own output -
 		// goes to stderr.
-		if(!_out) {
-			fflush(stdout);
-			int fd = dup(fileno(stdout));
-			dup2(fileno(stderr), fileno(stdout));
-			_out = fdopen(fd, "w");
-		}
+		if(!_out) _out = CliPlatform::TakeStdout();
 		if(_jsonOutput) ReplyState("ready");
 	} else {
 		printf("Mesen CLI Debugger [%s / %s]. Type 'help' for commands.\n",

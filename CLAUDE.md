@@ -13,12 +13,17 @@ make                        # Release build with Clang (default)
 make -j$(nproc)             # Parallel release build
 DEBUG=1 make                # Debug build (-O0 -g)
 USE_GCC=true make           # Build with GCC instead of Clang
+HEADLESS=true make          # No SDL, window, sound or keyboard: runs --headless only
+make TARGET=windows         # Cross-compile a headless mesen-gdb.exe with MinGW-w64 (g++-mingw-w64-x86-64-posix)
+make TARGET=windows SDL2_PREFIX=~/.local/opt/SDL2-2.30.12/x86_64-w64-mingw32   # ... with the game window and sound
+make test TARGET=windows    # ... and run its unit tests under Wine
 SANITIZER=address DEBUG=1 make  # AddressSanitizer build
 SANITIZER=thread DEBUG=1 make   # ThreadSanitizer build
 make clean                  # Remove all object files and binaries
 ```
 
-Output binaries land in `bin/linux-x64/Release/mesen-gdb` (or `Debug/`).
+Output binaries land in `bin/linux-x64/Release/mesen-gdb` (or `Debug/`; `bin/windows-x64/Release/mesen-gdb.exe`
+for Windows), objects in `obj.<platform>/`, each with a `.d` of the headers it includes.
 
 ## Running
 
@@ -130,6 +135,7 @@ GDB/               The custom code in this fork (~1900 lines, 9 files)
   batch_runner.*   Non-interactive test runner with register/memory assertions
   debugger_cli.*   Interactive GDB-style REPL
   cli_symbols.*    .sym/.dbg symbols and address parsing for the CLI and its options
+  cli_platform.*   POSIX/Windows differences: stdio descriptors, home folder, stdin lines
   formatter.*      Human-readable and JSON output formatting
   cli_notification.h   Notification listener bridging emulator events to CLI
   console_info.h   Console/CPU type detection and memory region mapping
