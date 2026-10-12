@@ -34,6 +34,8 @@ using std::optional;
 	#if !defined(__MINGW32__) && (defined(__clang__) || defined(__GNUC__)) && defined(HAVE_LTO)
 		#define __forceinline __attribute__((always_inline)) inline
 	#else 
+		// MinGW's own __forceinline is always_inline: plain inline, as above.
+		#undef __forceinline
 		#define __forceinline inline
 	#endif
 #endif

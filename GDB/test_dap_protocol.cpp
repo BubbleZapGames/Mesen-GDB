@@ -3,14 +3,25 @@
 #include "Core/Debugger/DAP/DapMessageWriter.h"
 #include "Core/Debugger/DAP/DapJson.h"
 #include "Core/Debugger/DAP/DapTypes.h"
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#else
 #include <unistd.h>
+#endif
 
 static bool MakePipe(FILE*& readEnd, FILE*& writeEnd)
 {
 	int fds[2];
+#ifdef _WIN32
+	if(_pipe(fds, 65536, _O_BINARY) != 0) return false;
+	readEnd = _fdopen(fds[0], "rb");
+	writeEnd = _fdopen(fds[1], "wb");
+#else
 	if(pipe(fds) != 0) return false;
 	readEnd = fdopen(fds[0], "r");
 	writeEnd = fdopen(fds[1], "w");
+#endif
 	return readEnd && writeEnd;
 }
 

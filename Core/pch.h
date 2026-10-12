@@ -48,6 +48,8 @@
 		#define __forceinline inline
 	#endif
 #else
+	// MinGW's own __forceinline is always_inline: plain inline, as above.
+	#undef __forceinline
 	#define __forceinline inline
 	#define __noinline
 #endif

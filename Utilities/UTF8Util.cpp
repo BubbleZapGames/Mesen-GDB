@@ -5,7 +5,7 @@
 
 #ifdef _MSC_VER
 #define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
+#include <windows.h>
 #undef WIN32_LEAN_AND_MEAN
 #endif
 
@@ -44,4 +44,9 @@ namespace utf8
   			return conv.to_bytes(wstr);
 		#endif
 	}	
+
+#ifdef _WIN32
+	ifstream::~ifstream() { }
+	ofstream::~ofstream() { }
+#endif
 }
