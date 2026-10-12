@@ -65,6 +65,8 @@ ifeq ($(UNAME_S),Darwin)
 	MESENOS := osx
 	LTO := false
 	STATICLINK := false
+	# std::filesystem needs 10.15; 11.0 is the first release on Apple Silicon.
+	MESENFLAGS += -mmacosx-version-min=11.0
 endif
 
 MESENFLAGS += -m64
@@ -156,10 +158,6 @@ ifeq ($(MESENOS),windows)
 	endif
 endif
 
-ifeq ($(MESENOS)-$(HEADLESS),osx-false)
-	LINKOPTIONS += -framework Foundation -framework Cocoa -framework GameController -framework CoreHaptics -Wl,-rpath,/opt/local/lib
-endif
-
 # -MMD -MP: each object's headers go in a .d beside it, so changing a header
 # rebuilds what includes it.
 DEPFLAGS := -MMD -MP
@@ -200,12 +198,8 @@ else
 endif
 LINUXOBJ := $(call objs,$(LINUXSRC))
 
-ifeq ($(MESENOS)-$(HEADLESS),osx-false)
-	MACOSSRC := $(shell find MacOS -name '*.mm')
-else
-	MACOSSRC :=
-endif
-MACOSOBJ := $(call objs,$(MACOSSRC))
+# MacOS/ (upstream's keyboard and gamepad code) is not built: nothing uses it.
+MACOSOBJ :=
 
 ifeq ($(SYSTEM_LIBEVDEV), true)
 	LIBEVDEVLIB := $(shell pkg-config --libs libevdev)

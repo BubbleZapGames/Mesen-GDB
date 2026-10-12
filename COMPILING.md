@@ -30,6 +30,8 @@ To build without SDL2 (no game window, sound or keyboard; the binary always runs
 
 ## macOS
 
-To build on macOS, install SDL2 (e.g. via Homebrew).
+Install SDL2 with Homebrew (`brew install sdl2`), then run `make`. The result is
+`bin/osx-arm64/Release/mesen-gdb` on Apple Silicon, linked against Homebrew's SDL2.
 
-Once SDL2 is installed, run `make`.
+The game window does not work on macOS yet (SDL creates it on the emulator's render
+thread, and macOS only allows windows on the main thread): run with `--headless`.
