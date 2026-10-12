@@ -160,6 +160,11 @@ jobs:
       - name: Opens its window
         run: python3 tools/check-dap-window.py bin/osx-arm64/Release/mesen-gdb
 
+      # A ROM in the window: without --headless, a CLI session that cannot
+      # open SDL exits 2 instead of running headless.
+      - name: Runs a ROM in its window
+        run: bin/osx-arm64/Release/mesen-gdb tests/roms/green/green.sfc --script tests/roms/green/screen-is-green
+
       - uses: actions/upload-artifact@v4
         with:
           name: mesen-gdb-macos-arm64
