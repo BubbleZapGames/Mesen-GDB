@@ -146,8 +146,7 @@ GDB/               The custom code in this fork (~1900 lines, 9 files)
   cli_notification.h   Notification listener bridging emulator events to CLI
   console_info.h   Console/CPU type detection and memory region mapping
 
-Sdl/               SDL2 window, audio, keyboard and gamepads (not used with --headless)
-Linux/, MacOS/     Upstream's per-platform input code: not built (SDL handles input)
+Sdl/               SDL2 window, audio, keyboard and gamepads, on every platform (not used with --headless)
 Utilities/         Shared utilities (VirtualFile, FolderUtilities, CRC32, etc.)
 ```
 
@@ -165,9 +164,8 @@ The GDB/ directory is where nearly all development happens. Core/ is treated as 
 ## Dependencies
 
 - Clang (preferred, faster binaries) or GCC with C++17 support
-- SDL2 development libraries (`libsdl2-dev` on Ubuntu)
-- libevdev (Linux; bundled fallback included)
-- X11 (Linux)
+- SDL2 development libraries (`libsdl2-dev` on Ubuntu); Windows and macOS link it statically
+  from `SDL2_PREFIX` (see COMPILING.md)
 
 ## Testing
 

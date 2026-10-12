@@ -32,8 +32,7 @@ USE_GCC=true make                # build with GCC instead
 
 The binary is `bin/linux-x64/Release/mesen-gdb` (`Debug/` for a debug build).
 It needs Clang or GCC with C++17 and the SDL2 development libraries
-(`libsdl2-dev`); on Linux also X11 and libevdev (a copy is bundled). See
-[COMPILING.md](COMPILING.md).
+(`libsdl2-dev`). See [COMPILING.md](COMPILING.md).
 
 ## Command-line debugger
 

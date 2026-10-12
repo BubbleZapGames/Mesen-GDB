@@ -193,9 +193,7 @@ UTILOBJ := $(call objs,$(UTILSRC))
 SDLSRC := $(shell find Sdl -name '*.cpp')
 SDLOBJ := $(call objs,$(SDLSRC))
 
-# Linux/ and MacOS/ (upstream's per-platform keyboard, gamepad and mouse
-# code, with libevdev) are not built: input comes from SDL on every platform
-# (Sdl/SdlKeyManager).
+# The window, sound and input come from SDL on every platform (Sdl/).
 
 FSLIB := -lstdc++fs
 
@@ -248,4 +246,4 @@ clean:
 	rm -r -f $(OBJFOLDER)
 	rm -r -f $(OUTFOLDER)/$(GDBBIN) bin/dap-test$(EXE)
 	# Objects from before obj.<platform>, built beside their sources
-	find Core Utilities Sdl Linux MacOS GDB -name '*.o' -delete
+	find Core Utilities Sdl GDB -name '*.o' -delete
