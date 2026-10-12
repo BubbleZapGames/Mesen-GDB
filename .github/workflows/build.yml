@@ -119,23 +119,39 @@ jobs:
           path: bin/windows-x64/Release/mesen-gdb.exe
 
   macos:
-    # Apple Silicon. SDL from Homebrew, linked dynamically (like Linux).
+    # Apple Silicon, with SDL linked in statically.
     # Not in releases yet: the SDL window must move to the main thread first.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: brew install sdl2
+      - name: Cache SDL
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sdl2-static
+          key: sdl2-static-macos-${{ hashFiles('tools/build-sdl2-static.sh') }}
+
+      # Built from SDL's source (checked by SHA-256) for macOS 11 and later.
+      - name: Build SDL
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: tools/build-sdl2-static.sh "$RUNNER_TEMP/sdl2-static"
 
       - name: Build
-        run: make -j$(sysctl -n hw.logicalcpu)
+        run: make -j$(sysctl -n hw.logicalcpu) SDL2_PREFIX="$RUNNER_TEMP/sdl2-static"
 
-      - name: Linked libraries
-        run: otool -L bin/osx-arm64/Release/mesen-gdb
+      # One self-contained binary: nothing outside macOS itself.
+      - name: Only system libraries
+        run: |
+          libs=$(otool -L bin/osx-arm64/Release/mesen-gdb | tail -n +2 | awk '{print $1}')
+          echo "$libs"
+          if echo "$libs" | grep -vE '^(/usr/lib/|/System/Library/)'; then
+            echo "::error::mesen-gdb needs a library that is not part of macOS"
+            exit 1
+          fi
 
       - name: Unit tests
-        run: make test
+        run: make test SDL2_PREFIX="$RUNNER_TEMP/sdl2-static"
 
       - name: Starts
         run: "{ bin/osx-arm64/Release/mesen-gdb --help 2>&1 || true; } | grep -q -- --headless"

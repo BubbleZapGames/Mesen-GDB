@@ -1,9 +1,10 @@
 #Both clang & gcc work fine - clang seems to output faster code
 #The game window, sound and keyboard require SDL2; HEADLESS=true builds without
 #them (and without libevdev/X11), for a binary that only runs --headless.
-#TARGET=windows cross-compiles mesen-gdb.exe with MinGW-w64 (GCC, posix
-#threads); MINGW is its tool prefix. It is headless unless SDL2_PREFIX names
-#an SDL2 MinGW development prefix (e.g. .../SDL2-2.30.12/x86_64-w64-mingw32).
+#SDL2_PREFIX links SDL2 statically from a prefix; macOS requires it (build one
+#with tools/build-sdl2-static.sh). TARGET=windows cross-compiles mesen-gdb.exe
+#with MinGW-w64 (GCC, posix threads); MINGW is its tool prefix. It is headless
+#unless SDL2_PREFIX names SDL's MinGW package (.../SDL2-2.30.12/x86_64-w64-mingw32).
 #Run "make" to build
 
 MESENFLAGS=
@@ -33,23 +34,6 @@ ifeq ($(TARGET),windows)
 	CC := $(MINGW)gcc-posix
 endif
 
-HEADLESS ?= false
-
-ifeq ($(HEADLESS)-$(TARGET),false-windows)
-	ifeq ($(SDL2_PREFIX),)
-$(error TARGET=windows needs SDL2_PREFIX for the game window, or HEADLESS=true)
-	endif
-	SDL2_CONFIG ?= $(SDL2_PREFIX)/bin/sdl2-config
-	# SDL linked statically into a console program: without -mwindows, which
-	# would detach the console the CLI's stdin and stdout use, and without
-	# SDL2main, which would replace mesen-gdb's own main().
-	SDL2LIB := $(filter-out -mwindows -lSDL2main -lmingw32,$(shell $(SDL2_CONFIG) --static-libs))
-	SDL2INC := $(filter-out -Dmain=SDL_main,$(shell $(SDL2_CONFIG) --cflags)) -DSDL_MAIN_HANDLED
-else ifneq ($(HEADLESS),true)
-	SDL2_CONFIG ?= sdl2-config
-	SDL2LIB := $(shell $(SDL2_CONFIG) --libs)
-	SDL2INC := $(shell $(SDL2_CONFIG) --cflags)
-endif
 
 LINKCHECKUNRESOLVED := -Wl,-z,defs
 
@@ -101,6 +85,30 @@ ifeq ($(TARGET),windows)
 	EXE := .exe
 	# How `make test` runs a Windows binary on this machine.
 	TESTRUNNER ?= wine
+endif
+
+HEADLESS ?= false
+
+# SDL2. A prefix (SDL2_PREFIX) is linked statically, which Windows and macOS
+# require: their binaries carry SDL in them. Linux otherwise uses the
+# system's shared SDL.
+ifneq ($(HEADLESS),true)
+	ifneq ($(SDL2_PREFIX),)
+		SDL2_CONFIG ?= $(SDL2_PREFIX)/bin/sdl2-config
+		# Without SDL2main, which would replace mesen-gdb's own main(), and
+		# without -mwindows, which would detach the console the CLI's stdin
+		# and stdout use.
+		SDL2LIB := $(filter-out -mwindows -lSDL2main -lmingw32,$(shell $(SDL2_CONFIG) --static-libs))
+		SDL2INC := $(filter-out -Dmain=SDL_main,$(shell $(SDL2_CONFIG) --cflags)) -DSDL_MAIN_HANDLED
+	else ifeq ($(MESENOS),windows)
+$(error TARGET=windows needs SDL2_PREFIX for the game window, or HEADLESS=true)
+	else ifeq ($(MESENOS),osx)
+$(error macOS links SDL2 statically: build it with tools/build-sdl2-static.sh <prefix>, then make SDL2_PREFIX=<prefix>)
+	else
+		SDL2_CONFIG ?= sdl2-config
+		SDL2LIB := $(shell $(SDL2_CONFIG) --libs)
+		SDL2INC := $(shell $(SDL2_CONFIG) --cflags)
+	endif
 endif
 
 DEBUG ?= 0

@@ -180,6 +180,7 @@ The R65 compiler's end-to-end tests use this binary to verify generated code.
 CI (`.github/workflows/build.yml`, on every push and pull request) builds the Linux and Windows SDL
 binaries on Ubuntu 24.04, runs `make test` for both (Windows under Wine) and `pytest python/tests`,
 and uploads `mesen-gdb` and `mesen-gdb.exe` as artifacts. A `macos` job builds and tests on Apple
-Silicon (`macos-26`, Homebrew SDL2) and uploads its binary, but releases don't include it yet. Pushing a `v*` tag (`git tag v1.2.0 && git push
+Silicon (`macos-26`, SDL2 linked statically via `tools/build-sdl2-static.sh`) and uploads its
+binary, but releases don't include it yet. Pushing a `v*` tag (`git tag v1.2.0 && git push
 origin v1.2.0`) also publishes them as a GitHub Release, once both builds pass: a Linux `.tar.gz`, a
 Windows `.zip` and `SHA256SUMS`; a tag with a hyphen (`v1.2.0-rc1`) makes a prerelease.
