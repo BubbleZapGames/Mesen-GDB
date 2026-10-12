@@ -1,0 +1,3 @@
+# Build intermediates; the .sfc, .sym and .dbg are committed.
+*.asm
+*.link

@@ -1,0 +1,5 @@
+# mesen-gdb --script for green.sfc: after start-up (snes_init takes 10-20
+# frames) the backdrop, CGRAM colour 0, is green: 0x03E0, stored low byte first.
+frames 30
+expect cgram 0 == 0xE0
+expect cgram 1 == 0x03

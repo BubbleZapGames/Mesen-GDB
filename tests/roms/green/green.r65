@@ -1,0 +1,33 @@
+// green - a test ROM for mesen-gdb: shows a solid green screen.
+//
+// No layers are enabled, so the whole screen is the backdrop, CGRAM colour 0.
+
+#[snesrom(name="MESEN-GDB GREEN")]
+
+#[stack(0x0100, 0x01FF)]
+
+include!("65816.r65")
+include!("sneslib.r65")
+
+#[bank(0)]
+
+#[entry]
+fn init_reset() -> ! {
+    snes_init();
+    main();
+}
+
+#[interrupt(nmi)]
+fn nmi_handler() {
+    clear_nmi!()
+}
+
+fn main() -> ! {
+    // snes_init leaves the screen in force blank, so CGRAM is writable.
+    set_backdrop!(Color::rgb!(0, 31, 0));
+    set_brightness!(15);
+    enable_nmi!();
+    loop {
+        wait_nmi!();
+    }
+}

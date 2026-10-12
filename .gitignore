@@ -164,6 +164,8 @@ $RECYCLE.BIN/
 .DS_Store
 *.nes
 *.sfc
+# Test ROMs are committed with their source.
+!tests/roms/**/*.sfc
 *.gb
 *.gbc
 *.sav
