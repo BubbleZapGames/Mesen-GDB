@@ -12,4 +12,6 @@ private:
 public:
 	DapMessageWriter(FILE* output = stdout);
 	void SendMessage(JsonValue&& message);
+	// Close the output; later messages are dropped
+	void Close();
 };

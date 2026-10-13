@@ -9,11 +9,24 @@ DapMessageWriter::DapMessageWriter(FILE* output) : _output(output) {}
 
 void DapMessageWriter::SendMessage(JsonValue&& message) {
 	auto lock = _lock.AcquireSafe();
-	
+	if(!_output) {
+		// Closed: the session is over, and late events (e.g. "terminated"
+		// while the emulator shuts down) have nowhere to go
+		return;
+	}
+
 	std::string json = message.Serialize();
 	std::string header = "Content-Length: " + std::to_string(json.size()) + "\r\n\r\n";
 	
 	fwrite(header.c_str(), 1, header.size(), _output);
 	fwrite(json.c_str(), 1, json.size(), _output);
 	fflush(_output);
+}
+
+void DapMessageWriter::Close() {
+	auto lock = _lock.AcquireSafe();
+	if(_output) {
+		fclose(_output);
+		_output = nullptr;
+	}
 }

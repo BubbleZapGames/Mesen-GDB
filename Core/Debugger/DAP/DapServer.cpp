@@ -33,8 +33,14 @@ DapServer::DapServer(Emulator* emu, FILE* dapOutput) : _emu(emu), _writer(dapOut
 
 DapServer::~DapServer()
 {
-	// Detach listener so it doesn't call back into a destroyed server
+	Close();
+}
+
+void DapServer::Close()
+{
+	// Detach listener so it doesn't call back into a closed or destroyed server
 	_listener->Detach();
+	_writer.Close();
 }
 
 // ── Main message loop ──────────────────────────────────────────────

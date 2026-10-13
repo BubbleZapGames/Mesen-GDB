@@ -100,6 +100,9 @@ public:
 	~DapServer();
 
 	void Run();
+	// End of session: no more notifications, and close the output. Call after
+	// stopping the emulator, whose shutdown still reports to the client.
+	void Close();
 	void SendStoppedEvent(const char* reason, CpuType cpu);
 	bool IsStepping() const { return _stepping; }
 	void SendTerminatedEvent();

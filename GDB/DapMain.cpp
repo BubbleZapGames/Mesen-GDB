@@ -485,10 +485,13 @@ static int RunDapMode(CliArgs& args, FILE* dapOutput, Frontend* frontend)
 
 	server.Run();
 
-	fclose(dapOutput);
+	// Stop before closing the output: stopping notifies the listener, which
+	// still writes to it. Closing first had that write use the closed FILE
+	// and crash on exit now and then.
+	emu->Stop(true);
+	server.Close();
 
 	// Cleanup
-	emu->Stop(true);
 	emu->Release();
 	if(frontend) frontend->Detach();
 
