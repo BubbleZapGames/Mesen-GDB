@@ -28,19 +28,41 @@ private:
 	bool _configDone = false;
 	bool _stopOnEntry = true;
 	uint32_t _nextBreakpointId = 1;
-	// Breakpoints per source path — DAP sends setBreakpoints once per file,
-	// so keeping one flat list would drop every other file's breakpoints.
-	std::map<std::string, std::vector<Breakpoint>> _breakpointsBySource;
 
-	// The original requests, kept so they can be resolved again once symbols
-	// are available. VSCode sends setBreakpoints as soon as it sees the
-	// initialized event, which is before launch has loaded the .dbg.
-	struct SourceBreakpointRequest {
-		uint32_t dapId;
-		int line;
-		std::string condition;
+	// Where a breakpoint stands, as the client is told it
+	struct BreakpointStatus {
+		bool verified = false;
+		// Source breakpoints: the line it landed on, which can differ from
+		// the one asked for when that line has no code
+		int line = 0;
+		// Why it is not verified
+		std::string message;
+		bool operator==(const BreakpointStatus& o) const {
+			return verified == o.verified && line == o.line && message == o.message;
+		}
 	};
-	std::map<std::string, std::vector<SourceBreakpointRequest>> _requestsBySource;
+
+	// A breakpoint as the client asked for it, kept so it can be resolved
+	// again once symbols are available: VSCode sends setBreakpoints as soon as
+	// it sees the initialized event, which is before launch has loaded the .dbg.
+	struct BreakpointRequest {
+		uint32_t dapId = 0;
+		int line = 0;               // source breakpoints: the line asked for
+		uint32_t address = 0;       // instruction breakpoints: the CPU address
+		bool validAddress = false;
+		std::string condition;
+		BreakpointStatus status;
+		// What the client was last told, so changes go out as events
+		BreakpointStatus reported;
+		bool hasReported = false;
+	};
+	// Per source path — DAP sends setBreakpoints once per file, so one flat
+	// list would drop every other file's breakpoints
+	std::map<std::string, std::vector<BreakpointRequest>> _requestsBySource;
+	// From the disassembly view; each setInstructionBreakpoints replaces them all
+	std::vector<BreakpointRequest> _instructionRequests;
+	// What is installed in the debugger: every request that resolved
+	std::vector<Breakpoint> _installed;
 
 	SourceMapper _sourceMapper;
 
@@ -60,10 +82,17 @@ private:
 	static const char* CpuTypeName(CpuType cpu);
 
 	// Breakpoint helpers
-	void SyncBreakpoints();
-	// Rebuild _breakpointsBySource from _requestsBySource using current symbols
+	CpuType PrimaryCpu() const;
+	// Resolve every request against the current symbols and install the ones
+	// that resolved
 	void ResolveBreakpoints();
-	bool ResolveOne(const std::string& sourcePath, const SourceBreakpointRequest& req, Breakpoint& out) const;
+	BreakpointStatus ResolveSource(const std::string& sourcePath, const BreakpointRequest& req, Breakpoint& out);
+	BreakpointStatus ResolveInstruction(const BreakpointRequest& req, Breakpoint& out);
+	// Empty if the condition is usable (or cannot be checked yet), else why not
+	std::string CheckCondition(Debugger* dbg, const std::string& condition) const;
+	JsonValue BreakpointJson(BreakpointRequest& req, bool instruction);
+	// Tell the client about breakpoints whose status changed since it last heard
+	void SendBreakpointChanges();
 
 	// Request handlers — Phase 1
 	void HandleInitialize(const JsonValue& request);
@@ -88,6 +117,7 @@ private:
 	void HandleNext(const JsonValue& request);
 	void HandleStepOut(const JsonValue& request);
 	void HandleSetBreakpoints(const JsonValue& request);
+	void HandleSetInstructionBreakpoints(const JsonValue& request);
 	void HandleDisassemble(const JsonValue& request);
 
 	// Request handlers — Phase 4

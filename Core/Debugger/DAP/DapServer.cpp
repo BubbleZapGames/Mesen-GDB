@@ -85,6 +85,8 @@ void DapServer::Run()
 			HandleStepOut(request);
 		} else if(command == DapCommand::SetBreakpoints) {
 			HandleSetBreakpoints(request);
+		} else if(command == DapCommand::SetInstructionBreakpoints) {
+			HandleSetInstructionBreakpoints(request);
 		} else if(command == DapCommand::Disassemble) {
 			HandleDisassemble(request);
 		} else if(command == DapCommand::Evaluate) {
@@ -266,10 +268,13 @@ void DapServer::HandleLaunch(const JsonValue& request)
 	// set before launch (VSCode sends setBreakpoints as soon as it sees the
 	// initialized event) has to be resolved and re-applied here.
 	ResolveBreakpoints();
-	SyncBreakpoints();
 
 	auto resp = MakeResponse(request, true);
 	SendResponse(std::move(resp));
+
+	// Breakpoints set before launch were pending; tell the client where each
+	// one landed now that symbols are loaded
+	SendBreakpointChanges();
 }
 
 void DapServer::HandleConfigurationDone(const JsonValue& request)
@@ -278,7 +283,7 @@ void DapServer::HandleConfigurationDone(const JsonValue& request)
 
 	// Last chance to install breakpoints before execution resumes
 	ResolveBreakpoints();
-	SyncBreakpoints();
+	SendBreakpointChanges();
 
 	auto resp = MakeResponse(request, true);
 	SendResponse(std::move(resp));
@@ -766,22 +771,6 @@ void DapServer::HandleStepOut(const JsonValue& request)
 
 // ── Phase 2: Breakpoints ──────────────────────────────────────────
 
-// BreakpointData overlays Breakpoint's private fields (same pattern as debugger_cli.cpp)
-struct BreakpointData {
-	uint32_t id;
-	CpuType cpuType;
-	uint8_t _pad1[3];
-	MemoryType memoryType;
-	BreakpointTypeFlags type;
-	int32_t startAddr;
-	int32_t endAddr;
-	bool enabled;
-	bool markEvent;
-	bool ignoreDummyOperations;
-	char _pad2;
-	char condition[1000];
-};
-
 // Absolute (ROM) memory type for a CPU, used so execution breakpoints match
 // regardless of which bank mirror the code is fetched through (FastROM, HiROM).
 static MemoryType GetPrgRomMemoryType(CpuType cpuType)
@@ -804,49 +793,66 @@ static MemoryType GetPrgRomMemoryType(CpuType cpuType)
 	return MemoryType::SnesPrgRom;
 }
 
-void DapServer::SyncBreakpoints()
-{
-	DebuggerRequest req = _emu->GetDebugger(false);
-	Debugger* dbg = req.GetDebugger();
-	if(!dbg) {
-		// No ROM loaded yet — breakpoints are re-applied after launch.
-		return;
-	}
-
-	std::vector<Breakpoint> all;
-	for(auto& entry : _breakpointsBySource) {
-		all.insert(all.end(), entry.second.begin(), entry.second.end());
-	}
-	dbg->SetBreakpoints(all.data(), (uint32_t)all.size());
-}
-
-bool DapServer::ResolveOne(const std::string& sourcePath, const SourceBreakpointRequest& req, Breakpoint& out) const
+CpuType DapServer::PrimaryCpu() const
 {
 	auto cpuTypes = _emu->GetCpuTypes();
-	CpuType primaryCpu = cpuTypes.empty() ? CpuType::Snes : cpuTypes[0];
+	return cpuTypes.empty() ? CpuType::Snes : cpuTypes[0];
+}
 
-	bool isSourceFile = !sourcePath.empty() && sourcePath[0] != '0' && sourcePath[0] != '$';
+static bool IsSourcePath(const std::string& path)
+{
+	// The disassembly view's address breakpoints arrive as "0x..." or "$..."
+	return !path.empty() && path[0] != '0' && path[0] != '$';
+}
+
+// Shown on a breakpoint set before the program is loaded
+static const char* PENDING_MESSAGE = "Placed once the program is loaded";
+
+std::string DapServer::CheckCondition(Debugger* dbg, const std::string& condition) const
+{
+	if(condition.empty() || !dbg) {
+		// Nothing to check, or no debugger to check it with until launch
+		return "";
+	}
+	// An expression that does not parse compiles to nothing and silently
+	// never fires, so catch it here where the client can show why
+	EvalResultType type = EvalResultType::Invalid;
+	dbg->EvaluateExpression(condition, PrimaryCpu(), type, false);
+	return type == EvalResultType::Invalid ? "Invalid condition: " + condition : "";
+}
+
+DapServer::BreakpointStatus DapServer::ResolveSource(const std::string& sourcePath, const BreakpointRequest& req, Breakpoint& out)
+{
+	BreakpointStatus status;
+	status.line = req.line;
+	CpuType cpu = PrimaryCpu();
 	int32_t addr = -1;
 	bool useRomOffset = false;
 
-	if(isSourceFile) {
+	if(IsSourcePath(sourcePath)) {
 		if(!_sourceMapper.IsLoaded()) {
-			// Symbols not loaded yet — resolve again after launch
-			return false;
+			status.message = PENDING_MESSAGE;
+			return status;
 		}
 		// The .dbg records ROM file offsets. Matching on the absolute address
 		// makes the breakpoint fire whichever bank mirror executes the code —
 		// a FastROM game runs the same bytes at $80:xxxx as at $00:xxxx.
-		uint32_t romOffset = _sourceMapper.GetRomOffset(sourcePath, req.line);
+		int line = req.line;
+		uint32_t romOffset = _sourceMapper.GetRomOffset(sourcePath, req.line, &line);
 		if(romOffset != 0xFFFFFFFF) {
 			addr = (int32_t)romOffset;
 			useRomOffset = true;
 		} else {
-			uint32_t resolved = _sourceMapper.GetAddress(sourcePath, req.line);
+			uint32_t resolved = _sourceMapper.GetAddress(sourcePath, req.line, &line);
 			if(resolved != 0xFFFFFFFF) {
 				addr = (int32_t)resolved;
 			}
 		}
+		if(addr < 0) {
+			status.message = "No code at or near this line";
+			return status;
+		}
+		status.line = line;
 	} else {
 		// Disassembly view: the "line" is the address, or the path holds it
 		if(req.line > 0) {
@@ -857,46 +863,131 @@ bool DapServer::ResolveOne(const std::string& sourcePath, const SourceBreakpoint
 		} else if(addr < 0 && !sourcePath.empty() && sourcePath[0] == '$') {
 			try { addr = (int32_t)std::stoul(sourcePath.substr(1), nullptr, 16); } catch(...) {}
 		}
+		if(addr < 0) {
+			status.message = "Not an address";
+			return status;
+		}
 	}
 
-	if(addr < 0) {
-		return false;
+	DebuggerRequest dbgReq = _emu->GetDebugger(false);
+	status.message = CheckCondition(dbgReq.GetDebugger(), req.condition);
+	if(!status.message.empty()) {
+		return status;
 	}
 
-	static_assert(sizeof(BreakpointData) == sizeof(Breakpoint),
-		"BreakpointData layout must match Breakpoint");
-	BreakpointData* data = reinterpret_cast<BreakpointData*>(&out);
-	memset(data, 0, sizeof(BreakpointData));
-	data->id = req.dapId;
-	data->cpuType = primaryCpu;
-	data->memoryType = useRomOffset ? GetPrgRomMemoryType(primaryCpu)
-	                                : DebugUtilities::GetCpuMemoryType(primaryCpu);
-	data->type = BreakpointTypeFlags::Execute;
-	data->startAddr = addr;
-	data->endAddr = addr;
-	data->enabled = true;
+	MemoryType memoryType = useRomOffset ? GetPrgRomMemoryType(cpu) : DebugUtilities::GetCpuMemoryType(cpu);
+	out.Init(req.dapId, cpu, memoryType, BreakpointTypeFlags::Execute, addr, addr, req.condition);
+	status.verified = true;
+	return status;
+}
 
-	if(!req.condition.empty() && req.condition.size() < sizeof(data->condition)) {
-		strncpy(data->condition, req.condition.c_str(), sizeof(data->condition) - 1);
+DapServer::BreakpointStatus DapServer::ResolveInstruction(const BreakpointRequest& req, Breakpoint& out)
+{
+	BreakpointStatus status;
+	if(!req.validAddress) {
+		status.message = "Not an instruction reference";
+		return status;
 	}
 
-	return true;
+	DebuggerRequest dbgReq = _emu->GetDebugger(false);
+	Debugger* dbg = dbgReq.GetDebugger();
+	if(!dbg) {
+		status.message = PENDING_MESSAGE;
+		return status;
+	}
+	status.message = CheckCondition(dbg, req.condition);
+	if(!status.message.empty()) {
+		return status;
+	}
+
+	// Install on the ROM offset when the address is in ROM, for the same
+	// reason as source breakpoints: it then fires through any bank mirror
+	CpuType cpu = PrimaryCpu();
+	AddressInfo relAddr { (int32_t)req.address, DebugUtilities::GetCpuMemoryType(cpu) };
+	AddressInfo absAddr = dbg->GetAbsoluteAddress(relAddr);
+	if(absAddr.Address >= 0 && DebugUtilities::IsRom(absAddr.Type)) {
+		out.Init(req.dapId, cpu, absAddr.Type, BreakpointTypeFlags::Execute, absAddr.Address, absAddr.Address, req.condition);
+	} else {
+		out.Init(req.dapId, cpu, relAddr.Type, BreakpointTypeFlags::Execute, relAddr.Address, relAddr.Address, req.condition);
+	}
+	status.verified = true;
+	return status;
 }
 
 void DapServer::ResolveBreakpoints()
 {
-	_breakpointsBySource.clear();
+	_installed.clear();
 	for(auto& entry : _requestsBySource) {
-		std::vector<Breakpoint> resolved;
-		for(const SourceBreakpointRequest& req : entry.second) {
+		if(IsSourcePath(entry.first)) {
+			// Report locations in this file with the client's own path
+			_sourceMapper.NoteClientPath(entry.first);
+		}
+		for(BreakpointRequest& req : entry.second) {
 			Breakpoint bp;
-			if(ResolveOne(entry.first, req, bp)) {
-				resolved.push_back(bp);
+			req.status = ResolveSource(entry.first, req, bp);
+			if(req.status.verified) {
+				_installed.push_back(bp);
 			}
 		}
-		if(!resolved.empty()) {
-			_breakpointsBySource[entry.first] = std::move(resolved);
+	}
+	for(BreakpointRequest& req : _instructionRequests) {
+		Breakpoint bp;
+		req.status = ResolveInstruction(req, bp);
+		if(req.status.verified) {
+			_installed.push_back(bp);
 		}
+	}
+
+	DebuggerRequest dbgReq = _emu->GetDebugger(false);
+	if(Debugger* dbg = dbgReq.GetDebugger()) {
+		dbg->SetBreakpoints(_installed.data(), (uint32_t)_installed.size());
+	}
+	// No ROM loaded yet: launch resolves and installs them again
+}
+
+JsonValue DapServer::BreakpointJson(BreakpointRequest& req, bool instruction)
+{
+	auto bp = JsonValue::MakeObject();
+	bp.Set("id", JsonValue::MakeNumber(req.dapId));
+	bp.Set("verified", JsonValue::MakeBool(req.status.verified));
+	if(instruction) {
+		if(req.validAddress) {
+			char ref[32];
+			snprintf(ref, sizeof(ref), "0x%X", req.address);
+			bp.Set("instructionReference", JsonValue::MakeString(ref));
+		}
+	} else {
+		// VSCode moves the breakpoint marker to the line reported here
+		bp.Set("line", JsonValue::MakeNumber(req.status.line));
+	}
+	if(!req.status.message.empty()) {
+		bp.Set("message", JsonValue::MakeString(req.status.message));
+	}
+	req.reported = req.status;
+	req.hasReported = true;
+	return bp;
+}
+
+void DapServer::SendBreakpointChanges()
+{
+	auto send = [this](BreakpointRequest& req, bool instruction) {
+		if(req.hasReported && req.reported == req.status) {
+			return;
+		}
+		auto evt = MakeEvent(DapEvent::Breakpoint);
+		auto body = JsonValue::MakeObject();
+		body.Set("reason", JsonValue::MakeString("changed"));
+		body.Set("breakpoint", BreakpointJson(req, instruction));
+		evt.Set("body", std::move(body));
+		SendEvent(std::move(evt));
+	};
+	for(auto& entry : _requestsBySource) {
+		for(BreakpointRequest& req : entry.second) {
+			send(req, false);
+		}
+	}
+	for(BreakpointRequest& req : _instructionRequests) {
+		send(req, true);
 	}
 }
 
@@ -908,13 +999,12 @@ void DapServer::HandleSetBreakpoints(const JsonValue& request)
 	std::string sourcePath = source["path"].GetString();
 	std::string sourceName = source["name"].GetString();
 	std::string sourceKey = !sourcePath.empty() ? sourcePath : sourceName;
-	bool isSourceFile = !sourceKey.empty() && sourceKey[0] != '0' && sourceKey[0] != '$';
 
-	std::vector<SourceBreakpointRequest> requests;
+	std::vector<BreakpointRequest> requests;
 	const auto& breakpointsList = args["breakpoints"].GetArray();
 	for(size_t i = 0; i < breakpointsList.size(); i++) {
 		const JsonValue& bp = breakpointsList[i];
-		SourceBreakpointRequest req;
+		BreakpointRequest req;
 		req.dapId = _nextBreakpointId++;
 		req.line = bp["line"].GetType() == JsonValue::Type::Number ? (int)bp["line"].GetNumber() : 0;
 		req.condition = bp["condition"].GetString();
@@ -924,33 +1014,72 @@ void DapServer::HandleSetBreakpoints(const JsonValue& request)
 	if(requests.empty()) {
 		_requestsBySource.erase(sourceKey);
 	} else {
-		_requestsBySource[sourceKey] = requests;
+		_requestsBySource[sourceKey] = std::move(requests);
 	}
 
 	ResolveBreakpoints();
-	SyncBreakpoints();
 
-	auto verifiedBps = JsonValue::MakeArray();
-	for(const SourceBreakpointRequest& req : requests) {
-		Breakpoint probe;
-		bool resolved = ResolveOne(sourceKey, req, probe);
-		// A source breakpoint we cannot resolve yet is still pending, not bad:
-		// symbols arrive with launch. Only call it unverified once we have
-		// symbols and the line genuinely has no code.
-		bool verified = resolved || (isSourceFile && !_sourceMapper.IsLoaded());
-
-		auto bpResult = JsonValue::MakeObject();
-		bpResult.Set("id", JsonValue::MakeNumber(req.dapId));
-		bpResult.Set("verified", JsonValue::MakeBool(verified));
-		// Echo back the source line, not the address — VSCode moves the
-		// breakpoint marker to whatever line is reported here.
-		bpResult.Set("line", JsonValue::MakeNumber(req.line));
-		verifiedBps.Push(std::move(bpResult));
+	auto results = JsonValue::MakeArray();
+	auto it = _requestsBySource.find(sourceKey);
+	if(it != _requestsBySource.end()) {
+		for(BreakpointRequest& req : it->second) {
+			results.Push(BreakpointJson(req, false));
+		}
 	}
 
 	auto resp = MakeResponse(request, true);
 	auto body = JsonValue::MakeObject();
-	body.Set("breakpoints", std::move(verifiedBps));
+	body.Set("breakpoints", std::move(results));
+	resp.Set("body", std::move(body));
+	SendResponse(std::move(resp));
+}
+
+void DapServer::HandleSetInstructionBreakpoints(const JsonValue& request)
+{
+	const JsonValue& args = request["arguments"];
+
+	_instructionRequests.clear();
+	const auto& breakpointsList = args["breakpoints"].GetArray();
+	for(size_t i = 0; i < breakpointsList.size(); i++) {
+		const JsonValue& bp = breakpointsList[i];
+		BreakpointRequest req;
+		req.dapId = _nextBreakpointId++;
+		req.condition = bp["condition"].GetString();
+
+		// The reference is what stackTrace and disassemble hand out: "0x%X"
+		std::string ref = bp["instructionReference"].GetString();
+		int offset = bp["offset"].GetType() == JsonValue::Type::Number ? (int)bp["offset"].GetNumber() : 0;
+		try {
+			size_t used = 0;
+			int base = 10;
+			std::string digits = ref;
+			if(ref.size() > 2 && ref[0] == '0' && (ref[1] == 'x' || ref[1] == 'X')) {
+				digits = ref.substr(2);
+				base = 16;
+			} else if(!ref.empty() && ref[0] == '$') {
+				digits = ref.substr(1);
+				base = 16;
+			}
+			unsigned long value = std::stoul(digits, &used, base);
+			if(used == digits.size()) {
+				req.address = (uint32_t)((long long)value + offset);
+				req.validAddress = true;
+			}
+		} catch(...) {
+		}
+		_instructionRequests.push_back(std::move(req));
+	}
+
+	ResolveBreakpoints();
+
+	auto results = JsonValue::MakeArray();
+	for(BreakpointRequest& req : _instructionRequests) {
+		results.Push(BreakpointJson(req, true));
+	}
+
+	auto resp = MakeResponse(request, true);
+	auto body = JsonValue::MakeObject();
+	body.Set("breakpoints", std::move(results));
 	resp.Set("body", std::move(body));
 	SendResponse(std::move(resp));
 }

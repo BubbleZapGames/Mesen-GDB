@@ -17,6 +17,7 @@ namespace DapCommand {
 	constexpr const char* Next = "next";
 	constexpr const char* StepOut = "stepOut";
 	constexpr const char* SetBreakpoints = "setBreakpoints";
+	constexpr const char* SetInstructionBreakpoints = "setInstructionBreakpoints";
 	constexpr const char* Disassemble = "disassemble";
 	// Phase 4
 	constexpr const char* Evaluate = "evaluate";
@@ -30,6 +31,7 @@ namespace DapEvent {
 	constexpr const char* Continued = "continued";
 	constexpr const char* Terminated = "terminated";
 	constexpr const char* Exited = "exited";
+	constexpr const char* Breakpoint = "breakpoint";
 }
 
 namespace DapStoppedReason {
