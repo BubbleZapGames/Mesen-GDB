@@ -22,6 +22,23 @@ Engine, SMS/Game Gear and WonderSwan. It was made for SNES development with the
 R65 compiler, and its SNES support is the most complete: live input,
 power-on RAM pinning and the Python test driver are SNES-only.
 
+## Installing
+
+Download a build from [Releases](https://github.com/BubbleZapGames/Mesen-GDB/releases):
+
+- **Linux** (`linux-x64.tar.gz`): needs SDL2 installed (`libsdl2-2.0-0` on
+  Debian/Ubuntu).
+- **Windows** (`windows-x64.zip`): a single self-contained `mesen-gdb.exe`.
+- **macOS** (`macos-arm64.tar.gz` for Apple Silicon, `macos-x64.tar.gz` for
+  Intel; macOS 11 or later): self-contained. The binary is not signed, so macOS
+  quarantines it when downloaded with a browser and refuses to open it. Clear
+  the quarantine once after unpacking:
+
+  ```bash
+  tar -xzf mesen-gdb-*-macos-*.tar.gz
+  xattr -d com.apple.quarantine mesen-gdb
+  ```
+
 ## Building
 
 ```bash
