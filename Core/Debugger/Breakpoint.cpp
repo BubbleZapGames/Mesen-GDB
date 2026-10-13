@@ -36,6 +36,22 @@ bool Breakpoint::HasBreakpointType(BreakpointType type)
 	}
 }
 
+void Breakpoint::Init(uint32_t id, CpuType cpuType, MemoryType memoryType, BreakpointTypeFlags type,
+	int32_t startAddr, int32_t endAddr, const string& condition)
+{
+	_id = id;
+	_cpuType = cpuType;
+	_memoryType = memoryType;
+	_type = type;
+	_startAddr = startAddr;
+	_endAddr = endAddr;
+	_enabled = true;
+	_markEvent = false;
+	_ignoreDummyOperations = false;
+	memset(_condition, 0, sizeof(_condition));
+	strncpy(_condition, condition.c_str(), sizeof(_condition) - 1);
+}
+
 string Breakpoint::GetCondition()
 {
 	return _condition;

@@ -32,23 +32,6 @@
 #include <thread>
 #include <chrono>
 
-// We need to populate Breakpoint's private fields directly.
-// This struct mirrors the exact memory layout of Breakpoint.
-struct BreakpointData {
-	uint32_t id;
-	CpuType cpuType;           // uint8_t
-	uint8_t _pad1[3];          // padding to align MemoryType
-	MemoryType memoryType;     // int (4 bytes)
-	BreakpointTypeFlags type;  // int (4 bytes)
-	int32_t startAddr;
-	int32_t endAddr;
-	bool enabled;
-	bool markEvent;
-	bool ignoreDummyOperations;
-	char _pad2;                // padding
-	char condition[1000];
-};
-
 DebuggerCli::DebuggerCli(Emulator* emu, std::shared_ptr<CliNotificationListener> listener,
                          CpuType primaryCpu, ConsoleType consoleType, bool jsonOutput)
 	: _emu(emu), _listener(listener), _primaryCpu(primaryCpu),
@@ -104,21 +87,9 @@ void DebuggerCli::SyncBreakpoints(int64_t extraAddr)
 		if(!cbp.enabled) continue;
 
 		Breakpoint bp;
-		static_assert(sizeof(BreakpointData) == sizeof(Breakpoint),
-			"BreakpointData layout must match Breakpoint");
-		BreakpointData* data = reinterpret_cast<BreakpointData*>(&bp);
-
-		memset(data, 0, sizeof(BreakpointData));
-		data->id = cbp.id;
-		data->cpuType = _primaryCpu;
-		data->memoryType = cpuMemType;
-		data->type = cbp.isWatch ? BreakpointTypeFlags::Write : BreakpointTypeFlags::Execute;
-		data->startAddr = (int32_t)cbp.address;
-		data->endAddr = (int32_t)cbp.address;
-		data->enabled = true;
-		data->markEvent = false;
-		data->ignoreDummyOperations = false;
-
+		bp.Init(cbp.id, _primaryCpu, cpuMemType,
+			cbp.isWatch ? BreakpointTypeFlags::Write : BreakpointTypeFlags::Execute,
+			(int32_t)cbp.address, (int32_t)cbp.address);
 		bps.push_back(bp);
 	}
 

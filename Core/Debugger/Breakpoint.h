@@ -23,6 +23,12 @@ public:
 	bool IsMarked();
 	bool IsAllowedForOpType(MemoryOperationType opType);
 
+	// The UI marshals breakpoints in field by field; native hosts (the DAP
+	// server, the CLI) build them here rather than overlaying the private
+	// layout, which is easy to get subtly wrong.
+	void Init(uint32_t id, CpuType cpuType, MemoryType memoryType, BreakpointTypeFlags type,
+		int32_t startAddr, int32_t endAddr, const string& condition = "");
+
 private:
 	uint32_t _id;
 	CpuType _cpuType;

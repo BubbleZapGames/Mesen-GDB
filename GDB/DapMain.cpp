@@ -696,36 +696,11 @@ static int RunCliMode(CliArgs& args, Frontend* frontend)
 	if(!args.breakAddresses.empty()) {
 		MemoryType cpuMemType = ConsoleInfo::GetCpuMemoryType(primaryCpu);
 
-		struct BreakpointData {
-			uint32_t id;
-			CpuType cpuType;
-			uint8_t _pad1[3];
-			MemoryType memoryType;
-			BreakpointTypeFlags type;
-			int32_t startAddr;
-			int32_t endAddr;
-			bool enabled;
-			bool markEvent;
-			bool ignoreDummyOperations;
-			char _pad2;
-			char condition[1000];
-		};
-
 		std::vector<Breakpoint> bps;
 		uint32_t bpId = 1;
 		for(auto addr : args.breakAddresses) {
 			Breakpoint bp;
-			static_assert(sizeof(BreakpointData) == sizeof(Breakpoint),
-				"BreakpointData layout must match Breakpoint");
-			BreakpointData* data = reinterpret_cast<BreakpointData*>(&bp);
-			memset(data, 0, sizeof(BreakpointData));
-			data->id = bpId++;
-			data->cpuType = primaryCpu;
-			data->memoryType = cpuMemType;
-			data->type = BreakpointTypeFlags::Execute;
-			data->startAddr = (int32_t)addr;
-			data->endAddr = (int32_t)addr;
-			data->enabled = true;
+			bp.Init(bpId++, primaryCpu, cpuMemType, BreakpointTypeFlags::Execute, (int32_t)addr, (int32_t)addr);
 			bps.push_back(bp);
 		}
 
