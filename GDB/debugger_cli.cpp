@@ -1121,10 +1121,10 @@ bool DebuggerCli::IsRegisterName(const std::string& name)
 	return false;
 }
 
-// ParseExpectValue - the right side of an `expect`: a number (decimal, or
+// ParseAssertValue - the right side of an `assert`: a number (decimal, or
 // hex with 0x or $), or a symbol - a constant's value or a label's address -
 // optionally with a hex offset, as in an address: `camera_update+3`.
-uint32_t DebuggerCli::ParseExpectValue(const std::string& text)
+uint32_t DebuggerCli::ParseAssertValue(const std::string& text)
 {
 	if(!text.empty() && (isalpha((unsigned char)text[0]) || text[0] == '_')) {
 		std::string name = text.substr(0, text.find('+'));
@@ -1134,15 +1134,27 @@ uint32_t DebuggerCli::ParseExpectValue(const std::string& text)
 	return ParseCliNumber(text);
 }
 
-// CmdExpect - `expect <what> <op> <value>`: check one value and report it.
-// <what> is a register, or memory: an address or symbol with an optional
-// [index] (decimal) and :u8/:u16/:u24 width, or `<region> <addr>` for a
-// memory region. A failure is reported and counted and the session goes on;
-// Run() then exits 1 (2 if an expect could not be evaluated at all).
-void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::string& line)
+// CmdAssert - `assert <what> <op> <value> ["description"]`: check one value
+// and report it. <what> is a register, or memory: an address or symbol with an
+// optional [index] (decimal) and :u8/:u16/:u24 width, or `<region> <addr>` for
+// a memory region. The description, from the first quote to a quote that ends
+// the line, names the check in its report. A failure is reported and counted
+// and the session goes on; Run() then exits 1 (2 if an assert could not be
+// evaluated at all).
+void DebuggerCli::CmdAssert(const std::string& line)
 {
-	std::string expr = line.substr(line.find("expect") + 6);
+	std::string expr = line.substr(line.find("assert") + 6);
+	std::string description;
+	size_t quote = expr.find('"');
+	size_t end = expr.find_last_not_of(" \t\r");
+	bool unterminated = quote != std::string::npos && (end == quote || expr[end] != '"');
+	if(quote != std::string::npos && !unterminated) {
+		description = expr.substr(quote + 1, end - quote - 1);
+		expr.erase(quote);
+	}
 	expr = expr.substr(std::min(expr.size(), expr.find_first_not_of(" \t")));
+	expr.erase(expr.find_last_not_of(" \t\r") + 1);
+	std::string label = description.empty() ? expr : description + " (" + expr + ")";
 	std::string where = !_scriptPath.empty() ? _scriptPath + ":" + std::to_string(_lineNo) + ": " :
 		_scripted ? "line " + std::to_string(_lineNo) + ": " : "";
 
@@ -1151,7 +1163,8 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 	int bytes = 0;
 	bool pass = false;
 	try {
-		std::vector<std::string> args(tokens.begin() + 1, tokens.end());
+		if(unterminated) throw std::invalid_argument("the description needs a closing quote at the end of the line");
+		std::vector<std::string> args = Tokenize(expr);
 		int memType = -1;   // the CPU's address space
 		if(args.size() == 4) {
 			for(auto& r : ConsoleInfo::GetMemoryRegions(_consoleType)) {
@@ -1160,7 +1173,7 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 			if(memType < 0) throw std::invalid_argument("unknown memory region '" + args[0] + "'");
 			args.erase(args.begin());
 		}
-		if(args.size() != 3) throw std::invalid_argument("usage: expect <what> <op> <value>");
+		if(args.size() != 3) throw std::invalid_argument("usage: assert <what> <op> <value> [\"description\"]");
 
 		static const struct { const char* text; RegCondOp op; } ops[] = {
 			{ "==", RegCondOp::Eq }, { "=", RegCondOp::Eq }, { "!=", RegCondOp::Ne },
@@ -1243,7 +1256,7 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 		uint32_t max = bytes == 1 ? 0xFF : bytes == 2 ? 0xFFFF : 0xFFFFFF;
 		std::string valueText = args[2];
 		bool negative = valueText.size() > 1 && valueText[0] == '-';
-		expected = ParseExpectValue(negative ? valueText.substr(1) : valueText);
+		expected = ParseAssertValue(negative ? valueText.substr(1) : valueText);
 		if(expected > max) {
 			throw std::invalid_argument(valueText + " does not fit in " + std::to_string(bytes * 8) + " bits");
 		}
@@ -1258,23 +1271,24 @@ void DebuggerCli::CmdExpect(const std::vector<std::string>& tokens, const std::s
 			case RegCondOp::Ge: pass = actual >= expected; break;
 		}
 	} catch(const std::exception& e) {
-		_expectErrors++;
+		_assertErrors++;
 		if(Fail(e.what())) return;
 		// A script reports it as the command that stopped it.
-		if(_scriptPath.empty()) printf("ERROR %s%s: %s\n", where.c_str(), expr.c_str(), e.what());
+		if(_scriptPath.empty()) printf("ERROR %s%s: %s\n", where.c_str(), label.c_str(), e.what());
 		return;
 	}
 
-	(pass ? _expectPassed : _expectFailed)++;
+	(pass ? _assertPassed : _assertFailed)++;
 	if(_jsonOutput) {
 		ReplyOk(std::string("\"pass\":") + (pass ? "true" : "false") + ",\"actual\":" + std::to_string(actual) +
-			",\"expected\":" + std::to_string(expected) + ",\"line\":" + std::to_string(_lineNo));
+			",\"expected\":" + std::to_string(expected) + ",\"line\":" + std::to_string(_lineNo) +
+			(description.empty() ? "" : ",\"description\":\"" + JsonEscape(description) + "\""));
 		return;
 	}
 	if(pass) {
-		fprintf(Results(), "PASS  %s\n", expr.c_str());
+		fprintf(Results(), "PASS  %s\n", label.c_str());
 	} else {
-		fprintf(Results(), "FAIL  %s%s: actual $%0*X (%u)\n", where.c_str(), expr.c_str(), bytes * 2, actual, actual);
+		fprintf(Results(), "FAIL  %s%s: actual $%0*X (%u)\n", where.c_str(), label.c_str(), bytes * 2, actual, actual);
 	}
 	fflush(Results());
 }
@@ -1331,10 +1345,12 @@ void DebuggerCli::CmdHelp()
 		"  input <port> <b,..> Hold buttons on a controller (1 = first) until changed;\n"
 		"                    a b x y l r select start up down left right, none, or\n"
 		"                    a raw $4218 word: input 1 0x8000 (B), input 1 128 (A)\n"
-		"  expect <what> <op> <value>  Check a value; a failure is reported and the\n"
+		"  assert <what> <op> <value> [\"text\"]\n"
+		"                    Check a value; a failure is reported and the\n"
 		"                    session exits 1. <what> is a register, an address or\n"
 		"                    symbol with [index] and :u8/:u16/:u24, or <region> <addr>.\n"
-		"                    Ops == != < > <= >=; values decimal, 0x/$ hex or a symbol\n"
+		"                    Ops == != < > <= >=; values decimal, 0x/$ hex or a symbol.\n"
+		"                    \"text\", at the end, describes the check in its report\n"
 		"  info symbols [text] List symbols whose names contain text\n"
 		"  reset             Reset emulator\n"
 		"  rwatch <cond>     Run until register condition is true\n"
@@ -1388,10 +1404,13 @@ int DebuggerCli::Run()
 		if(!ReadLine(line)) break;
 		_lineNo++;
 
-		// '#' starts a comment, at the start of a line or after a space; a
-		// line with nothing else is skipped (not a repeat of the last command).
+		// '#' starts a comment, at the start of a line or after a space, but
+		// not inside quotes (an assert's description); a line with nothing else
+		// is skipped (not a repeat of the last command).
+		bool quoted = false;
 		for(size_t i = 0; i < line.size(); i++) {
-			if(line[i] == '#' && (i == 0 || isspace((unsigned char)line[i - 1]))) {
+			if(line[i] == '"') quoted = !quoted;
+			if(!quoted && line[i] == '#' && (i == 0 || isspace((unsigned char)line[i - 1]))) {
 				line.erase(i);
 				if(line.find_first_not_of(" \t\r") == std::string::npos) line = "#";
 				break;
@@ -1526,8 +1545,8 @@ int DebuggerCli::Run()
 			} else if(cmd == "input") {
 				if(tokens.size() < 3) { Usage("Usage: input <port> <button,...|none|number>"); continue; }
 				CmdInput(std::stoi(tokens[1]), tokens[2]);
-			} else if(cmd == "expect") {
-				CmdExpect(tokens, line);
+			} else if(cmd == "assert") {
+				CmdAssert(line);
 			} else if(cmd == "movie") {
 				if(tokens.size() < 2) { Usage("Usage: movie <file.mmo>|stop"); continue; }
 				CmdMovie(tokens[1]);
@@ -1576,14 +1595,14 @@ int DebuggerCli::Run()
 	}
 	if(_out) fflush(_out);
 
-	int expects = _expectPassed + _expectFailed + _expectErrors;
-	if((expects > 0 || !_scriptPath.empty()) && !_jsonOutput) {
+	int asserts = _assertPassed + _assertFailed + _assertErrors;
+	if((asserts > 0 || !_scriptPath.empty()) && !_jsonOutput) {
 		FILE* out = Results();
-		fprintf(out, "expect: %d passed, %d failed", _expectPassed, _expectFailed);
-		if(_expectErrors) fprintf(out, ", %d could not be evaluated", _expectErrors);
+		fprintf(out, "assert: %d passed, %d failed", _assertPassed, _assertFailed);
+		if(_assertErrors) fprintf(out, ", %d could not be evaluated", _assertErrors);
 		if(_scriptStopped) fprintf(out, "; the script stopped at line %d", _lineNo);
 		fprintf(out, "\n");
 		fflush(out);
 	}
-	return (_expectErrors || _scriptStopped) ? 2 : _expectFailed ? 1 : 0;
+	return (_assertErrors || _scriptStopped) ? 2 : _assertFailed ? 1 : 0;
 }

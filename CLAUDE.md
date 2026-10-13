@@ -36,9 +36,9 @@ bin/linux-x64/Release/mesen-gdb game.sfc --batch --headless \
 # Batch mode exit codes: 0=pass, 1=fail, 2=error/timeout
 # Add --json for machine-readable output
 
-# Test script: debugger commands from a file, with expect checks
+# Test script: debugger commands from a file, with assert checks
 bin/linux-x64/Release/mesen-gdb game.sfc --headless --script tests/camera
-# Exit codes: 0 = every expect passed, 1 = one failed, 2 = a command failed (the script stops)
+# Exit codes: 0 = every assert passed, 1 = one failed, 2 = a command failed (the script stops)
 
 # DAP server (for VSCode integration)
 bin/linux-x64/Release/mesen-gdb --dap
@@ -73,13 +73,14 @@ and S A X Z (A B X Y), Q W (L R), E D (Select Start) by key position, and on the
   debugger: a debugger call made while the emulation thread is still leaving
   `Emulator::WaitForLock` deadlocks both threads (`DebuggerCli::WaitUntilStopped`).
 
-- `expect <what> <op> <value>` — check a register or memory value: `expect camera_x == 0x5A`,
-  `expect units__x_px[3]:u16 > 0`, `expect PC == snapshot_point` (PC includes K), `expect vram 1000 == 0`.
+- `assert <what> <op> <value> ["text"]` — check a register or memory value: `assert camera_x == 0x5A`,
+  `assert units__x_px[3]:u16 > 0`, `assert PC == snapshot_point` (PC includes K), `assert vram 1000 == 0`.
   An `[index]` is decimal and scaled by the `:u8/:u16/:u24` width; a symbol of 1-3 bytes reads at its
   size, a bigger one needs an index and width. Values are decimal, `0x`/`$` hex, negative, or a symbol
-  (a constant's value, or `name+off`). Prints PASS/FAIL (with the stdin line when scripted) and goes on; `Run()`
+  (a constant's value, or `name+off`). The optional `"text"` (first quote to a quote ending the line, no
+  escapes; the `#` comment stripper skips quoted text) describes the check. Prints PASS/FAIL (with the stdin line when scripted) and goes on; `Run()`
   returns 1 if any failed, 2 if one could not be evaluated, and `main` exits with it. JSON:
-  `pass`, `actual`, `expected`, `line`.
+  `pass`, `actual`, `expected`, `line`, and `description` if given.
 - `info symbols [text]` — symbols whose names contain *text*.
 
 `--script <file>` (any name, no extension expected) puts the file on stdin and calls

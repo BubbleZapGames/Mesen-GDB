@@ -298,7 +298,7 @@ static void PrintUsage(const char* prog)
 		"  <rom_path>              CLI interactive mode (default)\n"
 		"  <rom_path> --batch      CLI batch mode\n"
 		"  <rom_path> --script <f> Run a file of debugger commands as a test: exit 0 if\n"
-		"                          every expect passed, 1 if one failed, 2 on an error\n"
+		"                          every assert passed, 1 if one failed, 2 on an error\n"
 		"  --dap                   DAP mode: speak DAP JSON on stdin/stdout\n"
 		"                          (shows the game window; add --headless to suppress)\n"
 		"\n"

@@ -1,14 +1,14 @@
 # mesen-gdb --script for pad.sfc, driving controller 1 with `input`: PAD
 # follows it, and the backdrop (CGRAM colour 0) is red while a button is held.
 frames 30
-expect PAD == 0
-expect cgram 1 == 0x03
+assert PAD == 0
+assert cgram 1 == 0x03
 input 1 a,right
 frames 3
-expect PAD == 0x0180
-expect cgram 0 == 0x1F
-expect cgram 1 == 0x00
+assert PAD == 0x0180
+assert cgram 0 == 0x1F
+assert cgram 1 == 0x00
 input 1 none
 frames 3
-expect PAD == 0
-expect cgram 1 == 0x03
+assert PAD == 0
+assert cgram 1 == 0x03

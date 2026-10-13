@@ -50,11 +50,11 @@ private:
 	bool _replied = false;
 	StdinLines _stdin;
 	const CliSymbols* _symbols = nullptr;   // names for addresses, when a build left any
-	int _lineNo = 0;          // stdin lines read, for an expect failure's report
+	int _lineNo = 0;          // stdin lines read, for an assert failure's report
 	bool _scripted = false;   // stdin is not a terminal
-	int _expectPassed = 0;
-	int _expectFailed = 0;
-	int _expectErrors = 0;    // an expect that could not be evaluated
+	int _assertPassed = 0;
+	int _assertFailed = 0;
+	int _assertErrors = 0;    // an assert that could not be evaluated
 	bool _commandFailed = false;   // the current command reported an error
 	std::string _lastError;        // ... and its message
 	std::string _scriptPath;       // --script: stop at the first failed command
@@ -72,7 +72,7 @@ private:
 	void Usage(const char* text);
 	bool Fail(const std::string& message);
 	std::string StopReason();
-	FILE* Results() { return _out ? _out : stdout; }   // where expect results go
+	FILE* Results() { return _out ? _out : stdout; }   // where assert results go
 	bool ReadLine(std::string& line);
 	bool WaitOrPause(int timeoutMs);
 	uint32_t ProgramCounter();
@@ -110,7 +110,7 @@ private:
 	void CmdMovie(const std::string& filename);
 	void CmdInput(int port, const std::string& buttons);
 	void CmdInfoSymbols(const std::string& text);
-	void CmdExpect(const std::vector<std::string>& tokens, const std::string& line);
+	void CmdAssert(const std::string& line);
 	void CmdHelp();
 
 	uint16_t GetRegisterValue(const std::string& name, const uint8_t* stateBuffer);
@@ -120,7 +120,7 @@ private:
 	std::vector<std::string> Tokenize(const std::string& line);
 	uint32_t ParseAddress(const std::string& str, uint32_t* size = nullptr);
 	bool IsRegisterName(const std::string& name);
-	uint32_t ParseExpectValue(const std::string& text);
+	uint32_t ParseAssertValue(const std::string& text);
 
 public:
 	DebuggerCli(Emulator* emu, std::shared_ptr<CliNotificationListener> listener,
@@ -138,7 +138,7 @@ public:
 	void SetMaximumSpeed(bool on) { _maxSpeed = on; }
 	void SetInputProvider(std::shared_ptr<CliInputProvider> input) { _input = input; }
 	void SetSymbols(const CliSymbols* symbols) { _symbols = symbols; }
-	// Run - the REPL loop. Returns the exit status: 0, or 1 if an `expect`
+	// Run - the REPL loop. Returns the exit status: 0, or 1 if an `assert`
 	// failed, or 2 if one could not be evaluated or a script stopped.
 	int Run();
 };

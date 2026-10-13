@@ -13,7 +13,7 @@ emulation core of [Mesen2](https://github.com/SourMesen/Mesen2). One program,
   client) can debug a ROM at the source line, using the compiler's `.dbg`
   symbols.
 - **A unit-testing framework.** Test scripts of debugger commands with
-  `expect` checks (`--script`), a batch mode that checks registers and memory for CI, a
+  `assert` checks (`--script`), a batch mode that checks registers and memory for CI, a
   JSON protocol for programs to drive, and a Python package (`python/`) that
   runs ROM tests as ordinary pytest tests.
 
@@ -118,7 +118,7 @@ constants and RAM the assembler never lists.
 | `set <addr> <val>` | | Write one byte |
 | `write <addr> <hex>` | | Write several bytes: `write 7E0010 0a0b0c` |
 | `dump <region> <file>` | | Save a whole memory region to a file |
-| `expect <what> <op> <value>` | | Check a register or memory value (see [Test scripts](#test-scripts)) |
+| `assert <what> <op> <value> ["text"]` | | Check a register or memory value (see [Test scripts](#test-scripts)) |
 
 **Capture and replay**
 
@@ -214,7 +214,7 @@ own thread.
 
 ### Test scripts
 
-A test can be a plain file of debugger commands with `expect` checks. Any file
+A test can be a plain file of debugger commands with `assert` checks. Any file
 name will do:
 
 ```
@@ -227,9 +227,9 @@ input 1 right     # fly right
 frames 30
 input 1 select
 until snapshot_point 20
-expect PC == snapshot_point
-expect camera_x == 0x005A
-expect units__hp[3]:u8 > 0
+assert PC == snapshot_point "Reached snapshot_point"
+assert camera_x == 0x005A
+assert units__hp[3]:u8 > 0
 ```
 
 ```bash
@@ -237,10 +237,10 @@ mesen-gdb game.sfc --headless --script tests/camera
 ```
 
 ```
-PASS  PC == snapshot_point
+PASS  Reached snapshot_point (PC == snapshot_point)
 PASS  camera_x == 0x005A
 FAIL  tests/camera:13: units__hp[3]:u8 > 0: actual $00 (0)
-expect: 2 passed, 1 failed
+assert: 2 passed, 1 failed
 ```
 
 `--script` runs the file and exits with a status: 0 if every check passed, 1
@@ -260,26 +260,32 @@ if one failed, and 2 if the script could not finish. Specifically:
   error, and the count. The commands' own output and the emulator's log go to
   stderr.
 
-`#` starts a comment, on its own line or after a command. A script can also be
+`#` starts a comment, on its own line or after a command (but not inside an
+`assert` description's quotes). A script can also be
 piped to the prompt (`mesen-gdb game.sfc --headless < tests/camera`); the
 checks and the exit status work the same, but a failed command does not stop
 it.
 
-`expect <what> <op> <value>` checks one value:
+`assert <what> <op> <value> ["text"]` checks one value:
 - **`<what>`** is a register (`A`, `X`, `Y`, `SP`, `D`, `DBR`, `PS`, `K`, or
   `PC`, which includes its bank), or memory: an address or symbol with an
   optional `[index]` and width `:u8`, `:u16` or `:u24`. A symbol of 1-3 bytes
   is read at its size, and anything else as one byte unless a width is given;
   an array needs both, as in `units__x_px[3]:u16` (the index is decimal and
   scaled by the width). `<region> <addr>` reads a memory region instead:
-  `expect vram 1000:u16 == 0`.
+  `assert vram 1000:u16 == 0`.
 - **`<op>`** is `==`, `!=`, `<`, `>`, `<=` or `>=`, compared unsigned.
 - **`<value>`** is decimal, hex with `0x` or `$`, negative (`-1` is all ones
   at the width), or a symbol: a constant's value or a label's address, with an
   optional hex offset (`camera_update+3`).
+- **`"text"`**, optional, describes the check. It runs from the first quote to
+  a quote that ends the line (no escapes are needed or read), and the report
+  shows it before the expression: `PASS  Reached snapshot_point (PC ==
+  snapshot_point)`.
 
-With `--json`, an `expect` answers
-`{"ok":true,"pass":false,"actual":90,"expected":91,"line":11}`.
+With `--json`, an `assert` answers
+`{"ok":true,"pass":false,"actual":90,"expected":91,"line":11}`, plus
+`"description"` when it has one.
 
 ### Batch mode
 
@@ -318,7 +324,7 @@ output such as `disasm`) goes to stderr, so stdout carries only replies.
 |---|---|
 | `frames`, `step`, `next`, `finish`, `run`, `until`, `jump`, `regs`, `reset`, `loadstate`, `movie` | `stopped` (why it stopped), `frame`, `pc` (a number), `cpu` (registers and flags, as hex strings); `frames` and `until` add `frames` run, and `until` adds `hit` |
 | `mem`, `wram`, `vram`, ... | `addr` (a number), `hex` (the bytes, lower-case) |
-| `expect` | `pass`, `actual`, `expected`, `line` |
+| `assert` | `pass`, `actual`, `expected`, `line`, and `description` if given |
 | `info symbols` | `symbols`: a list of `name`, `addr`, `size`, `const` |
 | `dump`, `screenshot`, `savestate` | `path`, plus `bytes` or `frame` |
 | `break`, `watch` | `id` |
