@@ -78,8 +78,8 @@ private:
 	void HandleDisconnect(const JsonValue& request);
 
 	// Stepping helpers
-	/** Where the CPU is now: mapped source line (0 if none) and stack depth. */
-	void CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth);
+	/** Where the CPU is now: mapped source line (0 if none), stack depth and PC. */
+	void CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth, uint32_t* pcOut = nullptr);
 	/** Shared body of stepIn/next: walk instructions until the line changes. */
 	void StepSourceLine(const JsonValue& request, bool intoCalls);
 

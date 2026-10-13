@@ -557,7 +557,7 @@ static const int STEP_TIME_BUDGET_MS = 5000;
 // off as code we have no source for.
 static const uint32_t CALLEE_PROBE_INSTRUCTIONS = 64;
 
-void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth)
+void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth, uint32_t* pcOut)
 {
 	file.clear();
 	line = 0;
@@ -570,6 +570,9 @@ void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint3
 	}
 
 	uint32_t pc = dbg->GetProgramCounter(cpu, true);
+	if(pcOut) {
+		*pcOut = pc;
+	}
 
 	// Resolve through the ROM offset for the same reason the stack trace does:
 	// a FastROM/HiROM game runs the same bytes at several addresses.
@@ -620,7 +623,15 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 	std::string startFile;
 	int startLine = 0;
 	uint32_t startDepth = 0;
-	CurrentLocation(cpu, startFile, startLine, startDepth);
+	uint32_t lastPc = 0;
+	CurrentLocation(cpu, startFile, startLine, startDepth, &lastPc);
+	// A loop that lives on one line (`loop { wait_nmi!(); }`) never reaches
+	// another line; coming back round to where the step began ends it instead
+	uint32_t startPc = lastPc;
+	bool leftStart = false;
+	// Set when a step left the PC where it was: the CPU is halted (WAI), and
+	// each further plain step would only advance one idle cycle
+	bool halted = false;
 
 	_stepping = true;
 	uint32_t probed = 0;
@@ -640,7 +651,12 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 			break;
 		}
 
-		if(onSameLine >= EXACT_STEP_INSTRUCTIONS && batch < MAX_STEP_BATCH) {
+		if(halted) {
+			// Wait out the halt in one step over: the debugger runs to the
+			// instruction after it, through whatever interrupt ends it
+			type = StepType::StepOver;
+			batch = 1;
+		} else if(onSameLine >= EXACT_STEP_INSTRUCTIONS && batch < MAX_STEP_BATCH) {
 			// Double each time rather than jumping to the cap, so a loop that
 			// ends just after the exact phase is not overshot by much.
 			batch *= 2;
@@ -654,7 +670,7 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 			if(!dbg) {
 				break;
 			}
-			dbg->Step(cpu, (int)batch, batch > 1 ? StepType::Step : type,
+			dbg->Step(cpu, (int)batch, batch > 1 && !halted ? StepType::Step : type,
 				BreakSource::CpuStep);
 		}
 		if(!_listener->WaitForBreak(STEP_BREAK_TIMEOUT_MS)) {
@@ -668,7 +684,15 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 			return;
 		}
 
-		CurrentLocation(cpu, file, line, depth);
+		uint32_t pc = 0;
+		CurrentLocation(cpu, file, line, depth, &pc);
+		halted = pc == lastPc;
+		lastPc = pc;
+		if(pc != startPc) {
+			leftStart = true;
+		} else if(leftStart && depth == startDepth) {
+			break;
+		}
 
 		if(depth < startDepth) {
 			// Returned to the caller — that is a new place either way.
@@ -686,11 +710,20 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 			// Genuinely no source for this callee: nothing to show, so leave
 			// it in one operation rather than single-stepping the whole body.
 			probed = 0;
-			DebuggerRequest req = _emu->GetDebugger(false);
-			if(Debugger* dbg = req.GetDebugger()) {
-				_listener->ResetBreak();
-				dbg->Step(cpu, 1, StepType::StepOut, BreakSource::CpuStep);
-				_listener->WaitForBreak(STEP_BREAK_TIMEOUT_MS);
+			{
+				DebuggerRequest req = _emu->GetDebugger(false);
+				if(Debugger* dbg = req.GetDebugger()) {
+					_listener->ResetBreak();
+					dbg->Step(cpu, 1, StepType::StepOut, BreakSource::CpuStep);
+				}
+			}
+			if(_listener->WaitForBreak(STEP_BREAK_TIMEOUT_MS) && _listener->LastBreakWasBreakpoint()) {
+				// The callee — or an interrupt that fired mid-step, like the
+				// NMI handler — holds a breakpoint: stepping over code must
+				// not step over the breakpoints in it
+				_stepping = false;
+				SendStoppedEvent(DapStoppedReason::Breakpoint, cpu);
+				return;
 			}
 			continue;
 		}

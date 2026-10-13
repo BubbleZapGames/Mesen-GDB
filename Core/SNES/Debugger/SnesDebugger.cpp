@@ -316,8 +316,11 @@ void SnesDebugger::Step(int32_t stepCount, StepType type)
 			break;
 
 		case StepType::StepOver:
-			if(_prevOpCode == 0x20 || _prevOpCode == 0x22 || _prevOpCode == 0xFC || _prevOpCode == 0x00 || _prevOpCode == 0x02 || _prevOpCode == 0x44 || _prevOpCode == 0x54) {
-				//JSR, JSL, BRK, COP, MVP, MVN
+			if(_prevOpCode == 0x20 || _prevOpCode == 0x22 || _prevOpCode == 0xFC || _prevOpCode == 0x00 || _prevOpCode == 0x02 || _prevOpCode == 0x44 || _prevOpCode == 0x54 || _prevOpCode == 0xCB) {
+				//JSR, JSL, BRK, COP, MVP, MVN, WAI
+				//While halted on WAI, every idle cycle counts as an instruction, so
+				//stepping one would take a frame's worth of steps to reach the
+				//interrupt: run until the instruction after it instead
 				step.BreakAddress = (_prevProgramCounter & 0xFF0000) | (((_prevProgramCounter & 0xFFFF) + SnesDisUtils::GetOpSize(_prevOpCode, 0)) & 0xFFFF);
 				step.BreakStackPointer = _prevStackPointer;
 			} else {
