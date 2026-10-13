@@ -1,0 +1,9 @@
+version	major=2,minor=0
+info	csym=0,file=2,lib=0,line=2,mod=1,scope=1,seg=1,span=2,sym=0,type=0
+file	id=0,name="/nonexistent/a/main.r65",size=0,mtime=0
+file	id=1,name="/nonexistent/b/main.r65",size=0,mtime=0
+seg	id=0,name="BANK0",start=0x008000,size=0x8000,addrsize=absolute,type=ro,ooffs=0
+span	id=0,seg=0,start=0,size=2
+span	id=1,seg=0,start=16,size=2
+line	id=0,file=0,line=3,type=0,span=0
+line	id=1,file=1,line=3,type=0,span=1

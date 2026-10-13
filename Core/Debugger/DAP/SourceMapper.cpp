@@ -2,6 +2,30 @@
 #include "DbgFileParser.h"
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
+
+static bool FileExists(const std::string& path)
+{
+	std::ifstream f(path);
+	return f.good();
+}
+
+static std::string Basename(const std::string& path)
+{
+	size_t slash = path.find_last_of("/\\");
+	return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// Generated code with no file of its own, e.g. "<macro:set_backdrop>" for a
+// macro expansion. The client cannot open it.
+static bool IsPseudoFile(const std::string& name)
+{
+	return !name.empty() && name[0] == '<';
+}
+
+// Largest gap between the end of a statement's code and a macro expansion
+// that is still taken to belong to that statement
+static const uint32_t MACRO_ATTACH_GAP = 8;
 
 bool SourceMapper::LoadDbgFile(const std::string& path)
 {
@@ -12,18 +36,33 @@ bool SourceMapper::LoadDbgFile(const std::string& path)
 
 	// Build file name list and reverse lookup
 	_fileNames.clear();
+	_displayNames.clear();
 	_fileNameToId.clear();
+	std::string dbgDir = path.substr(0, path.size() - Basename(path).size());
+	// The file beside the .dbg can only stand in for a missing file whose name
+	// no other file shares — with two main.r65s it could be either
+	std::unordered_map<std::string, int> nameCount;
+	for(auto& f : data.files) {
+		if(!IsPseudoFile(f.name)) nameCount[Basename(f.name)]++;
+	}
 	for(auto& f : data.files) {
 		if(f.id < 0) continue;
-		if(f.id >= (int)_fileNames.size()) _fileNames.resize(f.id + 1);
+		if(f.id >= (int)_fileNames.size()) {
+			_fileNames.resize(f.id + 1);
+			_displayNames.resize(f.id + 1);
+		}
 		_fileNames[f.id] = f.name;
 		_fileNameToId[f.name] = f.id;
 
-		// Also index by basename for matching source breakpoints
-		size_t slash = f.name.find_last_of("/\\");
-		if(slash != std::string::npos) {
-			_fileNameToId[f.name.substr(slash + 1)] = f.id;
+		std::string display = f.name;
+		if(!IsPseudoFile(f.name) && !FileExists(f.name) && nameCount[Basename(f.name)] == 1) {
+			std::string beside = dbgDir + Basename(f.name);
+			if(FileExists(beside)) {
+				display = beside;
+			}
 		}
+		_displayNames[f.id] = display;
+		_fileNameToId[display] = f.id;
 	}
 
 	// Build address spans from lines → spans → segments
@@ -92,6 +131,35 @@ bool SourceMapper::LoadDbgFile(const std::string& path)
 			}
 		}
 	}
+
+	// A macro expansion is part of the statement that invoked it. The .dbg
+	// files it under a pseudo-file, so take the line of the real code just
+	// before it; with none close by, leave it unmapped rather than point the
+	// client at a file it cannot open.
+	std::sort(_addrSpans.begin(), _addrSpans.end(),
+		[](const AddrSpan& a, const AddrSpan& b) { return a.romOffset < b.romOffset; });
+	std::vector<AddrSpan> attached;
+	int lastReal = -1;
+	for(const AddrSpan& span : _addrSpans) {
+		bool pseudo = span.fileId >= 0 && span.fileId < (int)_fileNames.size() && IsPseudoFile(_fileNames[span.fileId]);
+		if(!pseudo) {
+			attached.push_back(span);
+			lastReal = (int)attached.size() - 1;
+			continue;
+		}
+		if(lastReal < 0) continue;
+		const AddrSpan& owner = attached[lastReal];
+		uint32_t ownerEnd = owner.romOffset + owner.size;
+		if(span.romOffset >= ownerEnd && span.romOffset - ownerEnd <= MACRO_ATTACH_GAP) {
+			AddrSpan owned = span;
+			owned.fileId = owner.fileId;
+			owned.line = owner.line;
+			attached.push_back(owned);
+			// A long expansion is several spans: each continues from the last
+			lastReal = (int)attached.size() - 1;
+		}
+	}
+	_addrSpans = std::move(attached);
 
 	// Sort address spans for binary search
 	std::sort(_addrSpans.begin(), _addrSpans.end(),
@@ -168,9 +236,7 @@ SourceLocation SourceMapper::GetSourceLocation(uint32_t cpuAddr) const
 				bestSize = checkIt->size;
 				best.valid = true;
 				best.line = checkIt->line;
-				if(checkIt->fileId >= 0 && checkIt->fileId < (int)_fileNames.size()) {
-					best.file = _fileNames[checkIt->fileId];
-				}
+				best.file = DisplayName(checkIt->fileId);
 			}
 		}
 	}
@@ -180,47 +246,90 @@ SourceLocation SourceMapper::GetSourceLocation(uint32_t cpuAddr) const
 
 uint32_t SourceMapper::LookupFileLine(
 	const std::unordered_map<FileLineKey, uint32_t, FileLineHash>& table,
-	const std::string& file, int line) const
+	const std::string& file, int line, int* resolvedLine) const
 {
-	// Try full path first
-	auto fileIt = _fileNameToId.find(file);
-	if(fileIt == _fileNameToId.end()) {
-		// Try basename
-		size_t slash = file.find_last_of("/\\");
-		if(slash != std::string::npos) {
-			fileIt = _fileNameToId.find(file.substr(slash + 1));
-		}
-	}
-
-	if(fileIt == _fileNameToId.end()) {
+	int fileId = FindFileId(file);
+	if(fileId < 0) {
 		return 0xFFFFFFFF;
 	}
 
-	// Exact line match
-	auto it = table.find(FileLineKey{fileIt->second, line});
+	// The line itself, else the nearest line within 5 that has code — later
+	// lines first, since a breakpoint on a blank or comment line means the
+	// statement that follows
+	auto it = table.find(FileLineKey{fileId, line});
 	if(it != table.end()) {
+		if(resolvedLine) *resolvedLine = line;
 		return it->second;
 	}
-
-	// Search nearby lines (within +5 lines) for closest match
 	for(int delta = 1; delta <= 5; delta++) {
-		it = table.find(FileLineKey{fileIt->second, line + delta});
-		if(it != table.end()) return it->second;
-		it = table.find(FileLineKey{fileIt->second, line - delta});
-		if(it != table.end()) return it->second;
+		it = table.find(FileLineKey{fileId, line + delta});
+		if(it != table.end()) {
+			if(resolvedLine) *resolvedLine = line + delta;
+			return it->second;
+		}
+		it = table.find(FileLineKey{fileId, line - delta});
+		if(it != table.end()) {
+			if(resolvedLine) *resolvedLine = line - delta;
+			return it->second;
+		}
 	}
 
 	return 0xFFFFFFFF;
 }
 
-uint32_t SourceMapper::GetAddress(const std::string& file, int line) const
+uint32_t SourceMapper::GetAddress(const std::string& file, int line, int* resolvedLine) const
 {
-	return LookupFileLine(_fileLineToAddr, file, line);
+	return LookupFileLine(_fileLineToAddr, file, line, resolvedLine);
 }
 
-uint32_t SourceMapper::GetRomOffset(const std::string& file, int line) const
+uint32_t SourceMapper::GetRomOffset(const std::string& file, int line, int* resolvedLine) const
 {
-	return LookupFileLine(_fileLineToRomOffset, file, line);
+	return LookupFileLine(_fileLineToRomOffset, file, line, resolvedLine);
+}
+
+int SourceMapper::FindFileId(const std::string& path) const
+{
+	auto exact = _fileNameToId.find(path);
+	if(exact != _fileNameToId.end()) {
+		return exact->second;
+	}
+
+	// Same file name elsewhere: a build moved or copied since, or the client
+	// opened it through another path. Several files can share a name, so
+	// prefer the one whose path agrees with the most trailing characters.
+	std::string name = Basename(path);
+	int best = -1;
+	size_t bestShared = 0;
+	for(int id = 0; id < (int)_fileNames.size(); id++) {
+		const std::string& recorded = _fileNames[id];
+		if(recorded.empty() || IsPseudoFile(recorded) || Basename(recorded) != name) continue;
+		size_t shared = 0;
+		while(shared < recorded.size() && shared < path.size()
+			&& recorded[recorded.size() - 1 - shared] == path[path.size() - 1 - shared]) {
+			shared++;
+		}
+		if(best < 0 || shared > bestShared) {
+			best = id;
+			bestShared = shared;
+		}
+	}
+	return best;
+}
+
+const std::string& SourceMapper::DisplayName(int fileId) const
+{
+	static const std::string none;
+	if(fileId < 0 || fileId >= (int)_displayNames.size()) return none;
+	return _displayNames[fileId];
+}
+
+void SourceMapper::NoteClientPath(const std::string& path)
+{
+	int fileId = FindFileId(path);
+	if(fileId >= 0) {
+		_displayNames[fileId] = path;
+		_fileNameToId[path] = fileId;
+	}
 }
 
 SourceLocation SourceMapper::GetSourceLocationByRomOffset(uint32_t romOffset) const
@@ -245,9 +354,7 @@ SourceLocation SourceMapper::GetSourceLocationByRomOffset(uint32_t romOffset) co
 				bestSize = checkIt->size;
 				best.valid = true;
 				best.line = checkIt->line;
-				if(checkIt->fileId >= 0 && checkIt->fileId < (int)_fileNames.size()) {
-					best.file = _fileNames[checkIt->fileId];
-				}
+				best.file = DisplayName(checkIt->fileId);
 			}
 		}
 	}

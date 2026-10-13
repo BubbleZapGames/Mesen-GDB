@@ -386,3 +386,88 @@ TEST(sourcemapper_file_list)
 	ASSERT_TRUE(mapper.GetSourceFiles()[0].find("sneslib.r65") != std::string::npos);
 	ASSERT_TRUE(mapper.GetSourceFiles()[1].find("main.r65") != std::string::npos);
 }
+
+// ── SourceMapper: resolved lines, macro expansions, source paths ─
+
+static std::string Fixture(const char* name)
+{
+	for(const char* dir : { "GDB/testdata/", "testdata/", "../GDB/testdata/" }) {
+		std::string path = std::string(dir) + name;
+		std::ifstream f(path);
+		if(f.is_open()) return path;
+	}
+	return std::string("GDB/testdata/") + name;
+}
+
+static bool EndsWith(const std::string& s, const std::string& suffix)
+{
+	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+TEST(sourcemapper_reports_resolved_line)
+{
+	SourceMapper mapper;
+	mapper.LoadDbgFile(GetDbgPath());
+	int line = 0;
+	// Line 98 has no code: the breakpoint lands on 100, and says so
+	ASSERT_EQ((int)mapper.GetAddress("main.r65", 98, &line), 0x18040);
+	ASSERT_EQ(line, 100);
+	ASSERT_EQ((int)mapper.GetRomOffset("main.r65", 100, &line), 0x8040);
+	ASSERT_EQ(line, 100);
+}
+
+TEST(sourcemapper_macro_expansion_belongs_to_its_statement)
+{
+	SourceMapper mapper;
+	ASSERT_TRUE(mapper.LoadDbgFile(Fixture("macro.dbg")));
+	// $8003 and $8005 are the expansion of a macro invoked on line 5
+	SourceLocation loc = mapper.GetSourceLocation(0x8003);
+	ASSERT_TRUE(loc.valid);
+	ASSERT_EQ(loc.line, 5);
+	ASSERT_TRUE(EndsWith(loc.file, "game.r65"));
+	loc = mapper.GetSourceLocation(0x8006);
+	ASSERT_TRUE(loc.valid);
+	ASSERT_EQ(loc.line, 5);
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(0x0005).line, 5);
+	// The next real statement is untouched
+	ASSERT_EQ(mapper.GetSourceLocation(0x8008).line, 9);
+	// An expansion with no statement just before it stays unmapped rather
+	// than naming a file the client cannot open
+	ASSERT_FALSE(mapper.GetSourceLocation(0x8040).valid);
+}
+
+TEST(sourcemapper_uses_source_beside_dbg_when_recorded_path_is_gone)
+{
+	SourceMapper mapper;
+	mapper.LoadDbgFile(Fixture("macro.dbg"));
+	// macro.dbg records /nonexistent/build/game.r65; testdata/game.r65 exists
+	SourceLocation loc = mapper.GetSourceLocation(0x8000);
+	ASSERT_TRUE(EndsWith(loc.file, "testdata/game.r65"));
+	ASSERT_TRUE(loc.file.find("nonexistent") == std::string::npos);
+}
+
+TEST(sourcemapper_reports_the_clients_path)
+{
+	SourceMapper mapper;
+	mapper.LoadDbgFile(Fixture("macro.dbg"));
+	mapper.NoteClientPath("/home/someone/project/game.r65");
+	ASSERT_STR_EQ(mapper.GetSourceLocation(0x8000).file, "/home/someone/project/game.r65");
+	ASSERT_EQ((int)mapper.GetAddress("/home/someone/project/game.r65", 9), 0x8008);
+}
+
+TEST(sourcemapper_same_name_prefers_matching_directories)
+{
+	SourceMapper mapper;
+	mapper.LoadDbgFile(Fixture("samename.dbg"));
+	ASSERT_EQ((int)mapper.GetAddress("/checkout/a/main.r65", 3), 0x8000);
+	ASSERT_EQ((int)mapper.GetAddress("/checkout/b/main.r65", 3), 0x8010);
+}
+
+TEST(sourcemapper_same_name_never_falls_back_beside_dbg)
+{
+	SourceMapper mapper;
+	mapper.LoadDbgFile(Fixture("samename.dbg"));
+	// testdata/main.r65 exists, but could be either of the two recorded files
+	ASSERT_STR_EQ(mapper.GetSourceLocation(0x8000).file, "/nonexistent/a/main.r65");
+	ASSERT_STR_EQ(mapper.GetSourceLocation(0x8010).file, "/nonexistent/b/main.r65");
+}
