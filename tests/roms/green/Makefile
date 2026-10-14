@@ -1,5 +1,6 @@
 # green.sfc: a test ROM showing a solid green screen (backdrop 0x03E0).
 # screen-is-green checks it: mesen-gdb green.sfc --script screen-is-green
+# blank-line-runs-nothing checks that a blank line in a script runs nothing.
 #
 # green.sfc, green.sym and green.dbg are committed, so using the ROM needs no
 # R65 toolchain. After editing green.r65, rebuild with `make` from an R65

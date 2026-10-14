@@ -261,7 +261,8 @@ if one failed, and 2 if the script could not finish. Specifically:
   stderr.
 
 `#` starts a comment, on its own line or after a command (but not inside an
-`assert` description's quotes). A script can also be
+`assert` description's quotes). A blank line runs nothing (at the prompt it
+repeats the last command, as in GDB). A script can also be
 piped to the prompt (`mesen-gdb game.sfc --headless < tests/camera`); the
 checks and the exit status work the same, but a failed command does not stop
 it.

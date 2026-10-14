@@ -1420,8 +1420,9 @@ int DebuggerCli::Run()
 
 		if(line.empty()) {
 			// Repeating the last command is for a person at the prompt; a
-			// client that sends an empty line gets nothing run.
-			if(_jsonOutput || _lastCommand.empty()) continue;
+			// client or a script (--script or piped) that sends an empty line
+			// gets nothing run.
+			if(_jsonOutput || _scripted || _lastCommand.empty()) continue;
 			line = _lastCommand;
 		}
 

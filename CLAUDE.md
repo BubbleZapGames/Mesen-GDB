@@ -86,7 +86,8 @@ and S A X Z (A B X Y), Q W (L R), E D (Select Start) by key position, and on the
 `--script <file>` (any name, no extension expected) puts the file on stdin and calls
 `DebuggerCli::SetScript`: stdout carries only results (PASS/FAIL, the stopping error, the count;
 everything else goes to stderr, as in JSON mode), the first failed command stops the script with exit
-2, `run`/`rwatch` give up after `--timeout` ms, and `--ram-init` defaults to zeros. A command marks
+2, `run`/`rwatch` give up after `--timeout` ms, and `--ram-init` defaults to zeros. A blank line repeats
+the last command only at a terminal; scripted (non-tty) stdin and `--json` skip it. A command marks
 itself failed through `Fail()` (or `Usage`/`ReplyError`, which do too), so any new error path must use
 it or a script will run on past the error.
 

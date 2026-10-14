@@ -45,6 +45,9 @@ jobs:
       - name: Starts
         run: "{ bin/linux-x64/Release/mesen-gdb --help 2>&1 || true; } | grep -q -- --headless"
 
+      - name: Script blank lines run nothing
+        run: bin/linux-x64/Release/mesen-gdb tests/roms/green/green.sfc --headless --script tests/roms/green/blank-line-runs-nothing
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

@@ -1,0 +1,6 @@
+# mesen-gdb --script for green.sfc: a blank line in a script runs nothing.
+# (At the prompt it repeats the last command; here it would step twice.)
+until main 60
+step
+
+assert PC == main+3 "One step from main: STZ $2121 is 3 bytes"
