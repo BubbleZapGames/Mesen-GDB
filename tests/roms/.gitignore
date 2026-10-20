@@ -1,5 +1,5 @@
 # Build intermediates; the ROM, .sym and .dbg are committed.
 *.asm
 *.link
-# cc65's assembly output
-*.s
+# cc65's assembly output (hello_asm's .s is source)
+hello_c/*.s
