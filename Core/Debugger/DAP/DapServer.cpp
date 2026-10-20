@@ -209,6 +209,9 @@ void DapServer::HandleInitialize(const JsonValue& request)
 	SendEvent(std::move(evt));
 }
 
+// CallstackManager keeps at most this many calls, and copies them all out
+static const uint32_t MAX_CALLSTACK = 512;
+
 void DapServer::HandleLaunch(const JsonValue& request)
 {
 	const JsonValue& args = request["arguments"];
@@ -412,16 +415,18 @@ void DapServer::HandleStackTrace(const JsonValue& request)
 		// Additional frames from CallstackManager
 		CallstackManager* csm = dbg->GetCallstackManager(cpu);
 		if(csm) {
-			StackFrameInfo csFrames[64];
+			StackFrameInfo csFrames[MAX_CALLSTACK];
 			uint32_t csCount = 0;
 			csm->GetCallstack(csFrames, csCount);
 
-			// CallstackManager returns frames from most recent to oldest
-			for(uint32_t i = 0; i < csCount && frameCount < 64; i++) {
+			// CallstackManager lists calls oldest first; the client wants the
+			// caller of the current frame next, then its caller, and so on
+			for(uint32_t n = 0; n < csCount && frameCount < 64; n++) {
+				const StackFrameInfo& call = csFrames[csCount - 1 - n];
 				const char* annotation = nullptr;
-				if(csFrames[i].Flags == StackFrameFlags::Nmi) annotation = "NMI";
-				else if(csFrames[i].Flags == StackFrameFlags::Irq) annotation = "IRQ";
-				frames.Push(makeFrame(frameCount, csFrames[i].Source, annotation));
+				if(call.Flags == StackFrameFlags::Nmi) annotation = "NMI";
+				else if(call.Flags == StackFrameFlags::Irq) annotation = "IRQ";
+				frames.Push(makeFrame(frameCount, call.Source, annotation));
 				frameCount++;
 			}
 		}
@@ -597,7 +602,7 @@ void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint3
 
 	CallstackManager* csm = dbg->GetCallstackManager(cpu);
 	if(csm) {
-		StackFrameInfo frames[64];
+		StackFrameInfo frames[MAX_CALLSTACK];
 		uint32_t count = 0;
 		csm->GetCallstack(frames, count);
 		depth = count;
