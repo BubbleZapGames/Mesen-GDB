@@ -110,7 +110,9 @@ bool SourceMapper::LoadDbgFile(const std::string& path)
 
 			RawSpan rs;
 			rs.romOffset = fileOffset - _romHeaderSize;
-			if(_nes) {
+			if(_nes || (seg.start >> 16) != 0) {
+				// The segment's own address: NES, or a segment placed in a
+				// bank explicitly (ca65 with a SNES memory map, $80:8000)
 				rs.addr = seg.start + span.start;
 			} else {
 				// For SNES LoROM: each 32KB ROM chunk maps to $xx:8000-$xx:FFFF
