@@ -576,3 +576,25 @@ std::string SourceMapper::GetLabelAtRomOffset(uint32_t romOffset) const
 		[](const SymEntry& sym, uint32_t k) { return sym.romOffset < k; });
 	return it != _romSymbols.end() && it->romOffset == romOffset ? it->name : "";
 }
+
+bool SourceMapper::FindFunction(const std::string& name, uint32_t& romOffset, uint32_t& cpuAddr) const
+{
+	// The names as typed, then without or with cc65's '_': the table holds
+	// C names without it, and assembly-defined ones as written
+	std::vector<std::string> names = { name };
+	if(name.size() > 1 && name[0] == '_') names.push_back(name.substr(1));
+	else names.push_back("_" + name);
+
+	for(const std::string& n : names) {
+		for(const std::vector<SymEntry>* table : { &_scopes, &_symbols }) {
+			for(const SymEntry& sym : *table) {
+				if(sym.name == n) {
+					romOffset = sym.romOffset;
+					cpuAddr = sym.addr;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}

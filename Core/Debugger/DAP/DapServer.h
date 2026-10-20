@@ -50,6 +50,7 @@ private:
 		int line = 0;               // source breakpoints: the line asked for
 		uint32_t address = 0;       // instruction breakpoints: the CPU address
 		bool validAddress = false;
+		std::string name;           // function breakpoints: the function
 		std::string condition;
 		BreakpointStatus status;
 		// What the client was last told, so changes go out as events
@@ -61,6 +62,8 @@ private:
 	std::map<std::string, std::vector<BreakpointRequest>> _requestsBySource;
 	// From the disassembly view; each setInstructionBreakpoints replaces them all
 	std::vector<BreakpointRequest> _instructionRequests;
+	// By function name; each setFunctionBreakpoints replaces them all
+	std::vector<BreakpointRequest> _functionRequests;
 	// What is installed in the debugger: every request that resolved
 	std::vector<Breakpoint> _installed;
 
@@ -88,9 +91,11 @@ private:
 	void ResolveBreakpoints();
 	BreakpointStatus ResolveSource(const std::string& sourcePath, const BreakpointRequest& req, Breakpoint& out);
 	BreakpointStatus ResolveInstruction(const BreakpointRequest& req, Breakpoint& out);
+	BreakpointStatus ResolveFunction(const BreakpointRequest& req, Breakpoint& out);
 	// Empty if the condition is usable (or cannot be checked yet), else why not
 	std::string CheckCondition(Debugger* dbg, const std::string& condition) const;
-	JsonValue BreakpointJson(BreakpointRequest& req, bool instruction);
+	enum class BreakpointKind { Source, Instruction, Function };
+	JsonValue BreakpointJson(BreakpointRequest& req, BreakpointKind kind);
 	// Tell the client about breakpoints whose status changed since it last heard
 	void SendBreakpointChanges();
 
@@ -118,6 +123,7 @@ private:
 	void HandleStepOut(const JsonValue& request);
 	void HandleSetBreakpoints(const JsonValue& request);
 	void HandleSetInstructionBreakpoints(const JsonValue& request);
+	void HandleSetFunctionBreakpoints(const JsonValue& request);
 	void HandleDisassemble(const JsonValue& request);
 
 	// Request handlers — Phase 4

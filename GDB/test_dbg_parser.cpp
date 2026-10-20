@@ -621,3 +621,35 @@ TEST(sourcemapper_sym_v1_and_nocash)
 	ASSERT_TRUE(nocash.LoadSymFile(Fixture("nocash.sym"), LoRomOffset));
 	ASSERT_STR_EQ(nocash.GetLabelAtRomOffset(0x10), "main");
 }
+
+// ── Function breakpoints: names to addresses ─────────────────────
+
+TEST(sourcemapper_find_function)
+{
+	SourceMapper mapper = LoadCSample();
+	uint32_t romOffset = 0, cpuAddr = 0;
+	// A C function by its C name, or cc65's
+	ASSERT_TRUE(mapper.FindFunction("main", romOffset, cpuAddr));
+	ASSERT_EQ((int)romOffset, 0);
+	ASSERT_EQ((int)cpuAddr, 0x8000);
+	ASSERT_TRUE(mapper.FindFunction("_main", romOffset, cpuAddr));
+	ASSERT_EQ((int)romOffset, 0);
+	// A plain label
+	ASSERT_TRUE(mapper.FindFunction("start", romOffset, cpuAddr));
+	ASSERT_EQ((int)romOffset, 0x20);
+	// RAM: no ROM offset, just the CPU address
+	ASSERT_TRUE(mapper.FindFunction("counter", romOffset, cpuAddr));
+	ASSERT_EQ(romOffset, SourceMapper::NoRomOffset);
+	ASSERT_EQ((int)cpuAddr, 0x0300);
+	ASSERT_FALSE(mapper.FindFunction("nosuch", romOffset, cpuAddr));
+}
+
+TEST(sourcemapper_find_function_in_sym)
+{
+	SourceMapper mapper;
+	mapper.LoadSymFile(Fixture("sample.sym"), LoRomOffset);
+	uint32_t romOffset = 0, cpuAddr = 0;
+	ASSERT_TRUE(mapper.FindFunction("main_loop", romOffset, cpuAddr));
+	ASSERT_EQ((int)romOffset, 0x14);
+	ASSERT_EQ((int)cpuAddr, 0x8014);
+}

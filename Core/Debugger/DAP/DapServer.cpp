@@ -87,6 +87,8 @@ void DapServer::Run()
 			HandleSetBreakpoints(request);
 		} else if(command == DapCommand::SetInstructionBreakpoints) {
 			HandleSetInstructionBreakpoints(request);
+		} else if(command == DapCommand::SetFunctionBreakpoints) {
+			HandleSetFunctionBreakpoints(request);
 		} else if(command == DapCommand::Disassemble) {
 			HandleDisassemble(request);
 		} else if(command == DapCommand::Evaluate) {
@@ -197,6 +199,7 @@ void DapServer::HandleInitialize(const JsonValue& request)
 	body.Set("supportsDisassembleRequest", JsonValue::MakeBool(true));
 	body.Set("supportsSteppingGranularity", JsonValue::MakeBool(true));
 	body.Set("supportsInstructionBreakpoints", JsonValue::MakeBool(true));
+	body.Set("supportsFunctionBreakpoints", JsonValue::MakeBool(true));
 	body.Set("supportsEvaluateForHovers", JsonValue::MakeBool(true));
 	body.Set("supportsReadMemoryRequest", JsonValue::MakeBool(true));
 	body.Set("supportsWriteMemoryRequest", JsonValue::MakeBool(true));
@@ -975,6 +978,38 @@ DapServer::BreakpointStatus DapServer::ResolveInstruction(const BreakpointReques
 	return status;
 }
 
+DapServer::BreakpointStatus DapServer::ResolveFunction(const BreakpointRequest& req, Breakpoint& out)
+{
+	BreakpointStatus status;
+	if(!_sourceMapper.IsLoaded()) {
+		status.message = PENDING_MESSAGE;
+		return status;
+	}
+	uint32_t romOffset = SourceMapper::NoRomOffset;
+	uint32_t cpuAddr = 0;
+	if(!_sourceMapper.FindFunction(req.name, romOffset, cpuAddr)) {
+		status.message = "No function or label named " + req.name;
+		return status;
+	}
+
+	DebuggerRequest dbgReq = _emu->GetDebugger(false);
+	status.message = CheckCondition(dbgReq.GetDebugger(), req.condition);
+	if(!status.message.empty()) {
+		return status;
+	}
+
+	// On the ROM offset where there is one, so it fires through any bank mirror
+	CpuType cpu = PrimaryCpu();
+	if(romOffset != SourceMapper::NoRomOffset) {
+		out.Init(req.dapId, cpu, GetPrgRomMemoryType(cpu), BreakpointTypeFlags::Execute, romOffset, romOffset, req.condition);
+	} else {
+		MemoryType memoryType = DebugUtilities::GetCpuMemoryType(cpu);
+		out.Init(req.dapId, cpu, memoryType, BreakpointTypeFlags::Execute, cpuAddr, cpuAddr, req.condition);
+	}
+	status.verified = true;
+	return status;
+}
+
 void DapServer::ResolveBreakpoints()
 {
 	_installed.clear();
@@ -998,6 +1033,13 @@ void DapServer::ResolveBreakpoints()
 			_installed.push_back(bp);
 		}
 	}
+	for(BreakpointRequest& req : _functionRequests) {
+		Breakpoint bp;
+		req.status = ResolveFunction(req, bp);
+		if(req.status.verified) {
+			_installed.push_back(bp);
+		}
+	}
 
 	DebuggerRequest dbgReq = _emu->GetDebugger(false);
 	if(Debugger* dbg = dbgReq.GetDebugger()) {
@@ -1006,18 +1048,18 @@ void DapServer::ResolveBreakpoints()
 	// No ROM loaded yet: launch resolves and installs them again
 }
 
-JsonValue DapServer::BreakpointJson(BreakpointRequest& req, bool instruction)
+JsonValue DapServer::BreakpointJson(BreakpointRequest& req, BreakpointKind kind)
 {
 	auto bp = JsonValue::MakeObject();
 	bp.Set("id", JsonValue::MakeNumber(req.dapId));
 	bp.Set("verified", JsonValue::MakeBool(req.status.verified));
-	if(instruction) {
+	if(kind == BreakpointKind::Instruction) {
 		if(req.validAddress) {
 			char ref[32];
 			snprintf(ref, sizeof(ref), "0x%X", req.address);
 			bp.Set("instructionReference", JsonValue::MakeString(ref));
 		}
-	} else {
+	} else if(kind == BreakpointKind::Source) {
 		// VSCode moves the breakpoint marker to the line reported here
 		bp.Set("line", JsonValue::MakeNumber(req.status.line));
 	}
@@ -1031,24 +1073,27 @@ JsonValue DapServer::BreakpointJson(BreakpointRequest& req, bool instruction)
 
 void DapServer::SendBreakpointChanges()
 {
-	auto send = [this](BreakpointRequest& req, bool instruction) {
+	auto send = [this](BreakpointRequest& req, BreakpointKind kind) {
 		if(req.hasReported && req.reported == req.status) {
 			return;
 		}
 		auto evt = MakeEvent(DapEvent::Breakpoint);
 		auto body = JsonValue::MakeObject();
 		body.Set("reason", JsonValue::MakeString("changed"));
-		body.Set("breakpoint", BreakpointJson(req, instruction));
+		body.Set("breakpoint", BreakpointJson(req, kind));
 		evt.Set("body", std::move(body));
 		SendEvent(std::move(evt));
 	};
 	for(auto& entry : _requestsBySource) {
 		for(BreakpointRequest& req : entry.second) {
-			send(req, false);
+			send(req, BreakpointKind::Source);
 		}
 	}
 	for(BreakpointRequest& req : _instructionRequests) {
-		send(req, true);
+		send(req, BreakpointKind::Instruction);
+	}
+	for(BreakpointRequest& req : _functionRequests) {
+		send(req, BreakpointKind::Function);
 	}
 }
 
@@ -1084,7 +1129,7 @@ void DapServer::HandleSetBreakpoints(const JsonValue& request)
 	auto it = _requestsBySource.find(sourceKey);
 	if(it != _requestsBySource.end()) {
 		for(BreakpointRequest& req : it->second) {
-			results.Push(BreakpointJson(req, false));
+			results.Push(BreakpointJson(req, BreakpointKind::Source));
 		}
 	}
 
@@ -1135,7 +1180,36 @@ void DapServer::HandleSetInstructionBreakpoints(const JsonValue& request)
 
 	auto results = JsonValue::MakeArray();
 	for(BreakpointRequest& req : _instructionRequests) {
-		results.Push(BreakpointJson(req, true));
+		results.Push(BreakpointJson(req, BreakpointKind::Instruction));
+	}
+
+	auto resp = MakeResponse(request, true);
+	auto body = JsonValue::MakeObject();
+	body.Set("breakpoints", std::move(results));
+	resp.Set("body", std::move(body));
+	SendResponse(std::move(resp));
+}
+
+void DapServer::HandleSetFunctionBreakpoints(const JsonValue& request)
+{
+	const JsonValue& args = request["arguments"];
+
+	_functionRequests.clear();
+	const auto& breakpointsList = args["breakpoints"].GetArray();
+	for(size_t i = 0; i < breakpointsList.size(); i++) {
+		const JsonValue& bp = breakpointsList[i];
+		BreakpointRequest req;
+		req.dapId = _nextBreakpointId++;
+		req.name = bp["name"].GetString();
+		req.condition = bp["condition"].GetString();
+		_functionRequests.push_back(std::move(req));
+	}
+
+	ResolveBreakpoints();
+
+	auto results = JsonValue::MakeArray();
+	for(BreakpointRequest& req : _functionRequests) {
+		results.Push(BreakpointJson(req, BreakpointKind::Function));
 	}
 
 	auto resp = MakeResponse(request, true);

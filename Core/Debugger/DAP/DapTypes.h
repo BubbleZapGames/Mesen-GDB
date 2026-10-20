@@ -18,6 +18,7 @@ namespace DapCommand {
 	constexpr const char* StepOut = "stepOut";
 	constexpr const char* SetBreakpoints = "setBreakpoints";
 	constexpr const char* SetInstructionBreakpoints = "setInstructionBreakpoints";
+	constexpr const char* SetFunctionBreakpoints = "setFunctionBreakpoints";
 	constexpr const char* Disassemble = "disassemble";
 	// Phase 4
 	constexpr const char* Evaluate = "evaluate";

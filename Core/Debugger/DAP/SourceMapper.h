@@ -69,6 +69,12 @@ public:
 	// A label at exactly this ROM offset, or empty
 	std::string GetLabelAtRomOffset(uint32_t romOffset) const;
 
+	// Where the function (or label) of this name starts: its ROM offset, or
+	// NoRomOffset with its CPU address when it isn't in ROM. A function wins
+	// over a label of the same name. A C name matches with or without cc65's
+	// leading '_'. False if nothing has the name.
+	bool FindFunction(const std::string& name, uint32_t& romOffset, uint32_t& cpuAddr) const;
+
 	bool IsLoaded() const { return _loaded; }
 
 	// Get all source files, as reported to the client
