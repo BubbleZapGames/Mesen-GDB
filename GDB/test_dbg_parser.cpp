@@ -653,3 +653,19 @@ TEST(sourcemapper_find_function_in_sym)
 	ASSERT_EQ((int)romOffset, 0x14);
 	ASSERT_EQ((int)cpuAddr, 0x8014);
 }
+
+TEST(wlasym_pvsneslib_labels_without_colons)
+{
+	// PVSnesLib links with wlalink -s, then strips the colons: bbbbaaaa name
+	WlaSymData data;
+	ASSERT_TRUE(WlaSymParser::Parse(Fixture("pvsneslib.sym"), data));
+	ASSERT_EQ((int)data.labels.size(), 3);
+	ASSERT_EQ((int)data.labels[1].addr, 0x158010);
+	ASSERT_STR_EQ(data.labels[1].name, "main");
+
+	SourceMapper mapper;
+	mapper.LoadSymFile(Fixture("pvsneslib.sym"), LoRomOffset);
+	uint32_t romOffset = 0, cpuAddr = 0;
+	ASSERT_TRUE(mapper.FindFunction("main", romOffset, cpuAddr));
+	ASSERT_EQ((int)romOffset, 0x15 * 0x8000 + 0x10);
+}

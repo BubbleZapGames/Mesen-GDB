@@ -1,0 +1,4 @@
+; no$snes symbolic information for "game.sfc".
+00008000 reset
+00158010 main
+007e0100 player_x

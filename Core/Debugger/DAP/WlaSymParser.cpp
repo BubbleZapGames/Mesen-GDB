@@ -17,13 +17,21 @@ static uint32_t Hex(const std::string& s)
 	return (uint32_t)strtoul(s.c_str(), nullptr, 16);
 }
 
-// "hh:hhhh" (or "hhhh:hhhh") → (bank << 16) | offset
+// "hh:hhhh" (or "hhhh:hhhh") → (bank << 16) | offset. PVSnesLib's build
+// strips the colon from its .sym (`sed 's/://'`), leaving "hhhhhhhh".
 static bool ParseBankAddr(const std::string& s, uint32_t& out)
 {
 	size_t colon = s.find(':');
-	if(colon == std::string::npos) return false;
-	std::string bank = s.substr(0, colon);
-	std::string addr = s.substr(colon + 1);
+	std::string bank, addr;
+	if(colon != std::string::npos) {
+		bank = s.substr(0, colon);
+		addr = s.substr(colon + 1);
+	} else if(s.size() >= 6 && s.size() <= 8) {
+		bank = s.substr(0, s.size() - 4);
+		addr = s.substr(s.size() - 4);
+	} else {
+		return false;
+	}
 	if(!IsHex(bank) || !IsHex(addr) || addr.size() != 4) return false;
 	out = (Hex(bank) << 16) | Hex(addr);
 	return true;
