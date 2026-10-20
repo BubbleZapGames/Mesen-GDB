@@ -1,3 +1,5 @@
-# Build intermediates; the .sfc, .sym and .dbg are committed.
+# Build intermediates; the ROM, .sym and .dbg are committed.
 *.asm
 *.link
+# cc65's assembly output
+*.s

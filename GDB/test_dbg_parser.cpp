@@ -1,6 +1,7 @@
 #include "test_harness.h"
 #include "Core/Debugger/DAP/DbgFileParser.h"
 #include "Core/Debugger/DAP/SourceMapper.h"
+#include "Core/Debugger/DAP/WlaSymParser.h"
 #include <fstream>
 
 // Tests run against GDB/testdata/sample.dbg — a small checked-in fixture in
@@ -288,8 +289,8 @@ TEST(sourcemapper_symbol_no_match)
 {
 	SourceMapper mapper;
 	mapper.LoadDbgFile(GetDbgPath());
-	// __init_start has size 0, so the following byte resolves to nothing
-	ASSERT_STR_EQ(mapper.GetSymbolName(0x8101), "");
+	// The __init_start label has size 0, but its scope covers two bytes
+	ASSERT_STR_EQ(mapper.GetSymbolName(0x8101), "__init_start");
 	// Non-label symbols (equ) are not part of the symbol table
 	ASSERT_STR_EQ(mapper.GetSymbolName(0x0020), "");
 }
@@ -314,8 +315,8 @@ TEST(sourcemapper_symbol_by_rom_offset_within_size)
 	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x105), "wait_nmi");
 	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x109), "wait_nmi");
 	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x10A), "");
-	// __init_start has size 0, so only its exact offset resolves
-	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x101), "");
+	// The __init_start label has size 0, but its scope covers two bytes
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x101), "__init_start");
 }
 
 TEST(sourcemapper_symbol_by_rom_offset_excludes_non_rom)
@@ -470,4 +471,153 @@ TEST(sourcemapper_same_name_never_falls_back_beside_dbg)
 	// testdata/main.r65 exists, but could be either of the two recorded files
 	ASSERT_STR_EQ(mapper.GetSourceLocation(0x8000).file, "/nonexistent/a/main.r65");
 	ASSERT_STR_EQ(mapper.GetSourceLocation(0x8010).file, "/nonexistent/b/main.r65");
+}
+
+// ── C programs (cc65): cbuild/c_sample.dbg ───────────────────────
+// Modeled on cc65 -g output for an NES ROM: each C line (type=1) covers the
+// assembly generated for it, which has line records of its own in the .s.
+
+static SourceMapper LoadCSample(bool nes = true)
+{
+	SourceMapper mapper;
+	if(nes) mapper.SetNesRom(16);
+	mapper.LoadDbgFile(Fixture("cbuild/c_sample.dbg"));
+	return mapper;
+}
+
+TEST(dbg_parse_line_type)
+{
+	DbgData data;
+	ASSERT_TRUE(DbgFileParser::Parse(Fixture("cbuild/c_sample.dbg"), data));
+	ASSERT_EQ(data.lines[0].type, 1);
+	ASSERT_EQ(data.lines[1].type, 0);
+	ASSERT_STR_EQ(data.scopes[1].type, "scope");
+}
+
+TEST(sourcemapper_c_line_beats_its_assembly)
+{
+	SourceMapper mapper = LoadCSample();
+	// The .s lines cover smaller spans, but the C line is the one to show
+	SourceLocation loc = mapper.GetSourceLocationByRomOffset(0);
+	ASSERT_TRUE(loc.valid);
+	ASSERT_TRUE(loc.cLine);
+	ASSERT_EQ(loc.line, 11);
+	ASSERT_TRUE(EndsWith(loc.file, "cdemo.c"));
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(4).line, 11);
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(8).line, 12);
+	// NES CPU addresses are the segment's own: $8000 + offset
+	ASSERT_EQ(mapper.GetSourceLocation(0x8008).line, 12);
+}
+
+TEST(sourcemapper_c_and_assembly_lines_both_take_breakpoints)
+{
+	SourceMapper mapper = LoadCSample();
+	ASSERT_EQ((int)mapper.GetRomOffset("cdemo.c", 12), 8);
+	ASSERT_EQ((int)mapper.GetRomOffset("cdemo.s", 31), 3);
+	ASSERT_EQ((int)mapper.GetAddress("cdemo.c", 12), 0x8008);
+}
+
+TEST(sourcemapper_nes_header_is_not_rom)
+{
+	// The .dbg counts the 16-byte iNES header; Mesen's PRG-ROM offsets don't
+	ASSERT_EQ(LoadCSample(true).GetSourceLocationByRomOffset(0).line, 11);
+	ASSERT_EQ(LoadCSample(false).GetSourceLocationByRomOffset(16).line, 11);
+}
+
+TEST(sourcemapper_c_function_names)
+{
+	SourceMapper mapper = LoadCSample();
+	// The scope names the function past the internal label L0002 at $8008,
+	// and the C name drops cc65's '_'
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0), "main");
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(8), "main");
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(13), "main");
+	ASSERT_STR_EQ(mapper.GetLabelAtRomOffset(0), "main");
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x20), "start");
+	// The runtime's double underscore is its own name
+	ASSERT_STR_EQ(mapper.GetLabelAtRomOffset(0x24), "__crt_init");
+	// A RAM label is found by its CPU address only
+	ASSERT_STR_EQ(mapper.GetSymbolName(0x0300), "counter");
+}
+
+TEST(sourcemapper_c_source_found_from_a_parent_folder)
+{
+	SourceMapper mapper = LoadCSample();
+	// csrc/cdemo.c is relative to where the build ran: testdata/, above the
+	// cbuild/ folder the .dbg is in
+	SourceLocation loc = mapper.GetSourceLocationByRomOffset(0);
+	ASSERT_TRUE(EndsWith(loc.file, "testdata/csrc/cdemo.c"));
+	ASSERT_TRUE(loc.fileFound);
+	// cc65's runtime records paths from its own build: not on this disk
+	loc = mapper.GetSourceLocationByRomOffset(0x20);
+	ASSERT_TRUE(loc.valid);
+	ASSERT_FALSE(loc.fileFound);
+}
+
+// ── WLA-DX .sym files ────────────────────────────────────────────
+
+// LoROM bank 0 and up, as the debugger would answer for a SNES ROM
+static uint32_t LoRomOffset(uint32_t cpuAddr)
+{
+	uint32_t bank = cpuAddr >> 16;
+	uint32_t addr = cpuAddr & 0xFFFF;
+	if(bank >= 0x7E || addr < 0x8000) return SourceMapper::NoRomOffset;
+	return bank * 0x8000 + (addr - 0x8000);
+}
+
+TEST(wlasym_parse_sections)
+{
+	WlaSymData data;
+	ASSERT_TRUE(WlaSymParser::Parse(Fixture("sample.sym"), data));
+	ASSERT_EQ((int)data.labels.size(), 4);
+	ASSERT_EQ((int)data.labels[3].addr, 0x7E0100);
+	ASSERT_STR_EQ(data.files[0x10001], "game.s");
+	ASSERT_STR_EQ(data.files[0x10002], "lib/util.s");
+	ASSERT_EQ((int)data.lines.size(), 5);
+	ASSERT_EQ(data.lines[2].line, 12);
+	ASSERT_FALSE(WlaSymParser::Parse("/nonexistent/game.sym", data));
+}
+
+TEST(sourcemapper_sym_line_mapping)
+{
+	SourceMapper mapper;
+	ASSERT_TRUE(mapper.LoadSymFile(Fixture("sample.sym"), LoRomOffset));
+	// Each line runs to the next mapped address
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(0).line, 5);
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(1).line, 5);
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(2).line, 6);
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(0xF).line, 6);
+	ASSERT_EQ(mapper.GetSourceLocationByRomOffset(0x10).line, 12);
+	SourceLocation util = mapper.GetSourceLocationByRomOffset(0x20);
+	ASSERT_EQ(util.line, 3);
+	ASSERT_TRUE(EndsWith(util.file, "lib/util.s"));
+	ASSERT_EQ((int)mapper.GetRomOffset("game.s", 13), 0x14);
+}
+
+TEST(sourcemapper_sym_labels)
+{
+	SourceMapper mapper;
+	mapper.LoadSymFile(Fixture("sample.sym"), LoRomOffset);
+	ASSERT_STR_EQ(mapper.GetLabelAtRomOffset(0), "reset");
+	// A label runs to the next one
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x10), "main");
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x13), "main");
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x14), "main_loop");
+	// The last one has nothing to run to
+	ASSERT_STR_EQ(mapper.GetSymbolNameByRomOffset(0x30), "");
+	// RAM is found by its CPU address
+	ASSERT_STR_EQ(mapper.GetSymbolName(0x7E0100), "player_x");
+}
+
+TEST(sourcemapper_sym_v1_and_nocash)
+{
+	SourceMapper v1;
+	ASSERT_TRUE(v1.LoadSymFile(Fixture("v1.sym"), LoRomOffset));
+	ASSERT_EQ(v1.GetSourceLocationByRomOffset(0).line, 3);
+	ASSERT_EQ(v1.GetSourceLocation(0x8004).line, 4);
+
+	// The nocash format: labels with no section headers
+	SourceMapper nocash;
+	ASSERT_TRUE(nocash.LoadSymFile(Fixture("nocash.sym"), LoRomOffset));
+	ASSERT_STR_EQ(nocash.GetLabelAtRomOffset(0x10), "main");
 }

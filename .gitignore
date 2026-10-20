@@ -166,6 +166,7 @@ $RECYCLE.BIN/
 *.sfc
 # Test ROMs are committed with their source.
 !tests/roms/**/*.sfc
+!tests/roms/**/*.nes
 *.gb
 *.gbc
 *.sav

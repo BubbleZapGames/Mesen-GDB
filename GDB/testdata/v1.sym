@@ -1,0 +1,9 @@
+[labels]
+00:8000 start
+
+[source files]
+0000 00000000 old.s
+
+[addr-to-line mapping]
+00:8000 0000:00000003
+00:8004 0000:00000004

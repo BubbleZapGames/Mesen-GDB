@@ -28,6 +28,7 @@ struct DbgLine {
 	int id = -1;
 	int fileId = -1;
 	int line = 0;          // 1-based source line number
+	int type = 0;          // 0 assembly, 1 external (C source), 2 macro
 	std::vector<int> spanIds;
 };
 
@@ -44,6 +45,7 @@ struct DbgSymbol {
 struct DbgScope {
 	int id = -1;
 	std::string name;
+	std::string type;      // "scope" for a function (.proc), "global" etc.
 	int parentId = -1;
 	int symId = -1;
 	uint32_t size = 0;

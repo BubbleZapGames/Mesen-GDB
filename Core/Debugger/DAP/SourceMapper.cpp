@@ -1,8 +1,10 @@
 #include "SourceMapper.h"
 #include "DbgFileParser.h"
+#include "WlaSymParser.h"
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <map>
 
 static bool FileExists(const std::string& path)
 {
@@ -16,6 +18,11 @@ static std::string Basename(const std::string& path)
 	return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
+static bool IsAbsolute(const std::string& path)
+{
+	return !path.empty() && (path[0] == '/' || path[0] == '\\' || (path.size() > 1 && path[1] == ':'));
+}
+
 // Generated code with no file of its own, e.g. "<macro:set_backdrop>" for a
 // macro expansion. The client cannot open it.
 static bool IsPseudoFile(const std::string& name)
@@ -23,9 +30,50 @@ static bool IsPseudoFile(const std::string& name)
 	return !name.empty() && name[0] == '<';
 }
 
+// Where a recorded source path is on disk, or empty. A relative path is
+// tried against the symbol file's folder and each folder above it before
+// the working directory: the build ran in one of them (cc65 records paths
+// as given on its command line, and a .dbg often lands in build/).
+static std::string FindSourceFile(const std::string& recorded, const std::string& symbolDir)
+{
+	if(!IsAbsolute(recorded)) {
+		std::string dir = symbolDir;
+		while(!dir.empty()) {
+			if(FileExists(dir + recorded)) return dir + recorded;
+			if(dir.size() < 2) break;
+			size_t slash = dir.find_last_of("/\\", dir.size() - 2);
+			if(slash == std::string::npos) break;
+			dir = dir.substr(0, slash + 1);
+		}
+	}
+	return FileExists(recorded) ? recorded : "";
+}
+
+// cc65 prefixes a C name with '_' (main is _main). "__name" is the
+// runtime's own, so it keeps its underscores.
+static std::string CName(const std::string& name)
+{
+	if(name.size() > 1 && name[0] == '_' && name[1] != '_') return name.substr(1);
+	return name;
+}
+
 // Largest gap between the end of a statement's code and a macro expansion
 // that is still taken to belong to that statement
 static const uint32_t MACRO_ATTACH_GAP = 8;
+
+// A .sym line mapping records where each line's code starts, not its size:
+// it runs to the next mapped address, but never further than this
+static const uint32_t SYM_LINE_MAX_SIZE = 64;
+
+// Nor does a .sym label say how long it is: its code runs to the next label,
+// within this
+static const uint32_t SYM_LABEL_MAX_SIZE = 0x2000;
+
+void SourceMapper::SetNesRom(uint32_t headerSize)
+{
+	_nes = true;
+	_romHeaderSize = headerSize;
+}
 
 bool SourceMapper::LoadDbgFile(const std::string& path)
 {
@@ -34,144 +82,57 @@ bool SourceMapper::LoadDbgFile(const std::string& path)
 		return false;
 	}
 
-	// Build file name list and reverse lookup
-	_fileNames.clear();
-	_displayNames.clear();
-	_fileNameToId.clear();
-	std::string dbgDir = path.substr(0, path.size() - Basename(path).size());
-	// The file beside the .dbg can only stand in for a missing file whose name
-	// no other file shares — with two main.r65s it could be either
-	std::unordered_map<std::string, int> nameCount;
+	std::vector<std::string> files(data.files.size());
 	for(auto& f : data.files) {
-		if(!IsPseudoFile(f.name)) nameCount[Basename(f.name)]++;
-	}
-	for(auto& f : data.files) {
-		if(f.id < 0) continue;
-		if(f.id >= (int)_fileNames.size()) {
-			_fileNames.resize(f.id + 1);
-			_displayNames.resize(f.id + 1);
-		}
-		_fileNames[f.id] = f.name;
-		_fileNameToId[f.name] = f.id;
-
-		std::string display = f.name;
-		if(!IsPseudoFile(f.name) && !FileExists(f.name) && nameCount[Basename(f.name)] == 1) {
-			std::string beside = dbgDir + Basename(f.name);
-			if(FileExists(beside)) {
-				display = beside;
-			}
-		}
-		_displayNames[f.id] = display;
-		_fileNameToId[display] = f.id;
+		if(f.id >= 0) files[f.id] = f.name;
 	}
 
-	// Build address spans from lines → spans → segments
-	_addrSpans.clear();
-	_romOffsetSpans.clear();
-	_fileLineToAddr.clear();
-	_fileLineToRomOffset.clear();
+	// Names in a C program are the C ones, not cc65's assembler names
+	bool hasCLines = std::any_of(data.lines.begin(), data.lines.end(),
+		[](const DbgLine& l) { return l.type == 1; });
 
+	std::vector<RawSpan> spans;
 	// Largest ROM offset any span reaches — a self-contained upper bound on the
 	// ROM size, used below to tell ROM symbols from RAM ones.
 	uint32_t maxRomOffset = 0;
-
 	for(auto& line : data.lines) {
-		if(line.fileId < 0 || line.spanIds.empty()) continue;
-
-		uint32_t firstAddr = 0xFFFFFFFF;
-		uint32_t firstRomOffset = 0xFFFFFFFF;
-
+		if(line.fileId < 0) continue;
 		for(int spanId : line.spanIds) {
 			if(spanId < 0 || spanId >= (int)data.spans.size()) continue;
 			const DbgSpan& span = data.spans[spanId];
 			if(span.id < 0 || span.segId < 0 || span.segId >= (int)data.segments.size()) continue;
 
+			// Only ROM segments are in the file the offsets count
 			const DbgSegment& seg = data.segments[span.segId];
+			if(seg.type == "rw") continue;
+			uint32_t fileOffset = seg.ooffs + span.start;
+			if(fileOffset < _romHeaderSize) continue;
 
-			// Compute CPU address from ROM file offset.
-			// For SNES LoROM: each 32KB ROM chunk maps to $xx:8000-$xx:FFFF
-			uint32_t romOffset = seg.ooffs + span.start;
-			uint32_t bankSize = seg.size > 0 ? seg.size : 0x8000;
-			uint32_t bank = romOffset / bankSize;
-			uint32_t offsetInBank = romOffset % bankSize;
-			uint32_t addr = (bank << 16) | ((seg.start & 0xFFFF) + offsetInBank);
+			RawSpan rs;
+			rs.romOffset = fileOffset - _romHeaderSize;
+			if(_nes) {
+				rs.addr = seg.start + span.start;
+			} else {
+				// For SNES LoROM: each 32KB ROM chunk maps to $xx:8000-$xx:FFFF
+				uint32_t bankSize = seg.size > 0 ? seg.size : 0x8000;
+				uint32_t bank = fileOffset / bankSize;
+				uint32_t offsetInBank = fileOffset % bankSize;
+				rs.addr = (bank << 16) | ((seg.start & 0xFFFF) + offsetInBank);
+			}
+			rs.size = span.size;
+			rs.fileId = line.fileId;
+			rs.line = line.line;
+			rs.cLine = line.type == 1;
+			spans.push_back(rs);
 
-			AddrSpan as;
-			as.addr = addr;
-			as.romOffset = romOffset;
-			as.size = span.size;
-			as.fileId = line.fileId;
-			as.line = line.line;
-			_addrSpans.push_back(as);
-
-			if(romOffset + span.size > maxRomOffset) {
-				maxRomOffset = romOffset + span.size;
-			}
-
-			if(addr < firstAddr) {
-				firstAddr = addr;
-			}
-			if(romOffset < firstRomOffset) {
-				firstRomOffset = romOffset;
-			}
-		}
-
-		// Map file+line → first address
-		FileLineKey key{line.fileId, line.line};
-		if(firstAddr != 0xFFFFFFFF) {
-			auto it = _fileLineToAddr.find(key);
-			if(it == _fileLineToAddr.end() || firstAddr < it->second) {
-				_fileLineToAddr[key] = firstAddr;
-			}
-		}
-		if(firstRomOffset != 0xFFFFFFFF) {
-			auto it = _fileLineToRomOffset.find(key);
-			if(it == _fileLineToRomOffset.end() || firstRomOffset < it->second) {
-				_fileLineToRomOffset[key] = firstRomOffset;
-			}
+			maxRomOffset = std::max(maxRomOffset, rs.romOffset + span.size);
 		}
 	}
 
-	// A macro expansion is part of the statement that invoked it. The .dbg
-	// files it under a pseudo-file, so take the line of the real code just
-	// before it; with none close by, leave it unmapped rather than point the
-	// client at a file it cannot open.
-	std::sort(_addrSpans.begin(), _addrSpans.end(),
-		[](const AddrSpan& a, const AddrSpan& b) { return a.romOffset < b.romOffset; });
-	std::vector<AddrSpan> attached;
-	int lastReal = -1;
-	for(const AddrSpan& span : _addrSpans) {
-		bool pseudo = span.fileId >= 0 && span.fileId < (int)_fileNames.size() && IsPseudoFile(_fileNames[span.fileId]);
-		if(!pseudo) {
-			attached.push_back(span);
-			lastReal = (int)attached.size() - 1;
-			continue;
-		}
-		if(lastReal < 0) continue;
-		const AddrSpan& owner = attached[lastReal];
-		uint32_t ownerEnd = owner.romOffset + owner.size;
-		if(span.romOffset >= ownerEnd && span.romOffset - ownerEnd <= MACRO_ATTACH_GAP) {
-			AddrSpan owned = span;
-			owned.fileId = owner.fileId;
-			owned.line = owner.line;
-			attached.push_back(owned);
-			// A long expansion is several spans: each continues from the last
-			lastReal = (int)attached.size() - 1;
-		}
-	}
-	_addrSpans = std::move(attached);
-
-	// Sort address spans for binary search
-	std::sort(_addrSpans.begin(), _addrSpans.end(),
-		[](const AddrSpan& a, const AddrSpan& b) { return a.addr < b.addr; });
-
-	_romOffsetSpans = _addrSpans;
-	std::sort(_romOffsetSpans.begin(), _romOffsetSpans.end(),
-		[](const AddrSpan& a, const AddrSpan& b) { return a.romOffset < b.romOffset; });
-
-	// Build symbol table. Symbol values are CPU addresses measured from the ROM
-	// segment base — the same origin span offsets use — so inverting that gives
-	// a ROM offset, which is what survives bank mirroring.
+	// A label in a ROM segment lies at that segment's offset plus its distance
+	// from the segment's start. R65 writes banked values (bank << 16 | addr)
+	// that its segments don't cover; those are measured from the first ROM
+	// segment's base, the same origin its span offsets use.
 	bool haveRomSeg = false;
 	uint32_t segBase = 0;
 	for(auto& seg : data.segments) {
@@ -180,68 +141,288 @@ bool SourceMapper::LoadDbgFile(const std::string& path)
 		haveRomSeg = true;
 		break;
 	}
-
-	_symbols.clear();
-	_romSymbols.clear();
-	for(auto& sym : data.symbols) {
-		if(sym.name.empty() || sym.type != "lab") continue;
-		SymEntry entry;
-		entry.addr = sym.val;
-		entry.size = sym.size;
-		entry.name = sym.name;
-		entry.romOffset = NoRomOffset;
+	auto romOffsetOf = [&](uint32_t val, int segId) -> uint32_t {
+		if(segId >= 0 && segId < (int)data.segments.size()) {
+			const DbgSegment& seg = data.segments[segId];
+			if(seg.type != "rw" && val >= seg.start && val < seg.start + seg.size) {
+				uint32_t fileOffset = seg.ooffs + (val - seg.start);
+				return fileOffset >= _romHeaderSize ? fileOffset - _romHeaderSize : NoRomOffset;
+			}
+		}
 		// The bound matters: RAM statics are recorded as "lab" too (a $7Exxxx
 		// work variable would otherwise masquerade as a huge ROM offset).
-		if(haveRomSeg && sym.val >= segBase && (sym.val - segBase) < maxRomOffset) {
-			entry.romOffset = sym.val - segBase;
-			_romSymbols.push_back(entry);
+		if(!_nes && haveRomSeg && val >= segBase && (val - segBase) < maxRomOffset) {
+			return val - segBase;
 		}
-		_symbols.push_back(entry);
-	}
-	std::sort(_symbols.begin(), _symbols.end(),
-		[](const SymEntry& a, const SymEntry& b) { return a.addr < b.addr; });
-	std::sort(_romSymbols.begin(), _romSymbols.end(),
-		[](const SymEntry& a, const SymEntry& b) { return a.romOffset < b.romOffset; });
+		return NoRomOffset;
+	};
 
-	_loaded = true;
+	std::vector<SymEntry> labels;
+	for(auto& sym : data.symbols) {
+		if(sym.name.empty() || sym.type != "lab") continue;
+		labels.push_back({ sym.val, romOffsetOf(sym.val, sym.segId), sym.size,
+			hasCLines ? CName(sym.name) : sym.name });
+	}
+
+	// A sized scope is a function (.proc, or a C function): it names every
+	// address inside it, past whatever internal labels it holds
+	std::vector<SymEntry> scopes;
+	for(auto& sc : data.scopes) {
+		if(sc.type != "scope" || sc.size == 0) continue;
+		if(sc.symId < 0 || sc.symId >= (int)data.symbols.size()) continue;
+		const DbgSymbol& sym = data.symbols[sc.symId];
+		if(sym.id < 0 || sym.name.empty()) continue;
+		scopes.push_back({ sym.val, romOffsetOf(sym.val, sym.segId), sc.size,
+			hasCLines ? CName(sym.name) : sym.name });
+	}
+
+	Build(path, files, spans, std::move(labels), std::move(scopes));
 	fprintf(stderr, "[DAP] Loaded .dbg: %zu files, %zu spans, %zu symbols\n",
 		_fileNames.size(), _addrSpans.size(), _symbols.size());
 	return true;
 }
 
-SourceLocation SourceMapper::GetSourceLocation(uint32_t cpuAddr) const
+bool SourceMapper::LoadSymFile(const std::string& path, const std::function<uint32_t(uint32_t cpuAddr)>& toRomOffset)
 {
-	if(_addrSpans.empty()) return {};
+	WlaSymData data;
+	if(!WlaSymParser::Parse(path, data)) {
+		return false;
+	}
 
-	// Binary search: find the last span where addr <= cpuAddr
-	auto it = std::upper_bound(_addrSpans.begin(), _addrSpans.end(), cpuAddr,
-		[](uint32_t addr, const AddrSpan& span) { return addr < span.addr; });
+	std::vector<std::string> files;
+	std::map<uint32_t, int> fileIds;
+	for(auto& [key, name] : data.files) {
+		fileIds[key] = (int)files.size();
+		files.push_back(name);
+	}
 
-	// Check spans around this position (may need to check multiple since
-	// spans can overlap and we want the smallest containing span)
-	SourceLocation best;
-	uint32_t bestSize = 0xFFFFFFFF;
-
-	// Search backwards from upper_bound position
-	auto checkIt = it;
-	while(checkIt != _addrSpans.begin()) {
-		--checkIt;
-		if(checkIt->addr + checkIt->size <= cpuAddr) {
-			// This span ends before our address and all prior spans have
-			// even lower addresses, so we can stop
-			if(checkIt->addr + 256 < cpuAddr) break; // heuristic: stop if too far
+	std::vector<RawSpan> spans;
+	for(auto& entry : data.lines) {
+		auto file = fileIds.find(entry.fileKey);
+		if(file == fileIds.end() || entry.line <= 0) continue;
+		RawSpan rs;
+		rs.fileId = file->second;
+		rs.line = entry.line;
+		if(entry.hasRomOffset) {
+			// v2 gives the ROM offset; the address it prints is the slot's,
+			// not one the CPU necessarily runs the code at
+			rs.romOffset = entry.romOffset;
+			rs.hasAddr = false;
+		} else {
+			rs.addr = entry.cpuAddr;
+			rs.romOffset = toRomOffset(entry.cpuAddr);
 		}
-		if(cpuAddr >= checkIt->addr && cpuAddr < checkIt->addr + checkIt->size) {
-			if(checkIt->size < bestSize) {
-				bestSize = checkIt->size;
-				best.valid = true;
-				best.line = checkIt->line;
-				best.file = DisplayName(checkIt->fileId);
+		spans.push_back(rs);
+	}
+
+	// Each line's code runs to where the next mapped line starts
+	auto sizeSpans = [&spans](bool byRom) {
+		std::vector<RawSpan*> ordered;
+		for(auto& s : spans) {
+			if(byRom ? s.romOffset != NoRomOffset : (s.hasAddr && s.romOffset == NoRomOffset)) ordered.push_back(&s);
+		}
+		auto keyOf = [byRom](const RawSpan* s) { return byRom ? s->romOffset : s->addr; };
+		std::sort(ordered.begin(), ordered.end(),
+			[&](const RawSpan* a, const RawSpan* b) { return keyOf(a) < keyOf(b); });
+		for(size_t i = 0; i < ordered.size(); i++) {
+			uint32_t gap = SYM_LINE_MAX_SIZE;
+			for(size_t j = i + 1; j < ordered.size(); j++) {
+				if(keyOf(ordered[j]) > keyOf(ordered[i])) {
+					gap = std::min(gap, keyOf(ordered[j]) - keyOf(ordered[i]));
+					break;
+				}
+			}
+			ordered[i]->size = gap;
+		}
+	};
+	sizeSpans(true);
+	sizeSpans(false);
+
+	std::vector<SymEntry> labels;
+	for(auto& label : data.labels) {
+		labels.push_back({ label.addr, toRomOffset(label.addr), 0, label.name });
+	}
+	// Each ROM label runs to the next one
+	std::vector<SymEntry*> romLabels;
+	for(auto& l : labels) {
+		if(l.romOffset != NoRomOffset) romLabels.push_back(&l);
+	}
+	std::sort(romLabels.begin(), romLabels.end(),
+		[](const SymEntry* a, const SymEntry* b) { return a->romOffset < b->romOffset; });
+	for(size_t i = 0; i < romLabels.size(); i++) {
+		for(size_t j = i + 1; j < romLabels.size(); j++) {
+			uint32_t gap = romLabels[j]->romOffset - romLabels[i]->romOffset;
+			if(gap == 0) continue;
+			if(gap <= SYM_LABEL_MAX_SIZE) romLabels[i]->size = gap;
+			break;
+		}
+	}
+
+	Build(path, files, spans, std::move(labels), {});
+	fprintf(stderr, "[DAP] Loaded .sym: %zu files, %zu line mappings, %zu labels\n",
+		_fileNames.size(), _romOffsetSpans.size(), _symbols.size());
+	return true;
+}
+
+void SourceMapper::Build(const std::string& symbolPath, const std::vector<std::string>& files,
+	const std::vector<RawSpan>& rawSpans, std::vector<SymEntry> labels, std::vector<SymEntry> scopes)
+{
+	// Build file name list and reverse lookup
+	_fileNames.clear();
+	_displayNames.clear();
+	_fileNameToId.clear();
+	std::string symbolDir = symbolPath.substr(0, symbolPath.size() - Basename(symbolPath).size());
+	// The file beside the symbol file can only stand in for a missing file
+	// whose name no other file shares — with two main.r65s it could be either
+	std::unordered_map<std::string, int> nameCount;
+	for(auto& name : files) {
+		if(!name.empty() && !IsPseudoFile(name)) nameCount[Basename(name)]++;
+	}
+	_fileNames = files;
+	_displayNames.resize(files.size());
+	_fileFound.assign(files.size(), false);
+	for(int id = 0; id < (int)files.size(); id++) {
+		const std::string& name = files[id];
+		if(name.empty()) continue;
+		_fileNameToId[name] = id;
+
+		std::string display = name;
+		if(!IsPseudoFile(name)) {
+			std::string found = FindSourceFile(name, symbolDir);
+			if(!found.empty()) {
+				display = found;
+				_fileFound[id] = true;
+			} else if(nameCount[Basename(name)] == 1 && FileExists(symbolDir + Basename(name))) {
+				display = symbolDir + Basename(name);
+				_fileFound[id] = true;
+			}
+		}
+		_displayNames[id] = display;
+		_fileNameToId[display] = id;
+	}
+
+	// Map file+line → first address
+	_fileLineToAddr.clear();
+	_fileLineToRomOffset.clear();
+	for(const RawSpan& span : rawSpans) {
+		FileLineKey key{span.fileId, span.line};
+		if(span.hasAddr) {
+			auto it = _fileLineToAddr.find(key);
+			if(it == _fileLineToAddr.end() || span.addr < it->second) {
+				_fileLineToAddr[key] = span.addr;
+			}
+		}
+		if(span.romOffset != NoRomOffset) {
+			auto it = _fileLineToRomOffset.find(key);
+			if(it == _fileLineToRomOffset.end() || span.romOffset < it->second) {
+				_fileLineToRomOffset[key] = span.romOffset;
 			}
 		}
 	}
 
-	return best;
+	// A macro expansion is part of the statement that invoked it. The .dbg
+	// files it under a pseudo-file, so take the line of the real code just
+	// before it; with none close by, leave it unmapped rather than point the
+	// client at a file it cannot open.
+	std::vector<RawSpan> sorted = rawSpans;
+	std::sort(sorted.begin(), sorted.end(),
+		[](const RawSpan& a, const RawSpan& b) { return a.romOffset < b.romOffset; });
+	std::vector<RawSpan> attached;
+	int lastReal = -1;
+	for(const RawSpan& span : sorted) {
+		bool pseudo = span.fileId >= 0 && span.fileId < (int)_fileNames.size() && IsPseudoFile(_fileNames[span.fileId]);
+		if(!pseudo) {
+			attached.push_back(span);
+			lastReal = (int)attached.size() - 1;
+			continue;
+		}
+		if(lastReal < 0 || span.romOffset == NoRomOffset) continue;
+		const RawSpan& owner = attached[lastReal];
+		uint32_t ownerEnd = owner.romOffset + owner.size;
+		if(span.romOffset >= ownerEnd && span.romOffset - ownerEnd <= MACRO_ATTACH_GAP) {
+			RawSpan owned = span;
+			owned.fileId = owner.fileId;
+			owned.line = owner.line;
+			owned.cLine = owner.cLine;
+			attached.push_back(owned);
+			// A long expansion is several spans: each continues from the last
+			lastReal = (int)attached.size() - 1;
+		}
+	}
+
+	_addrSpans.clear();
+	_romOffsetSpans.clear();
+	for(const RawSpan& span : attached) {
+		AddrSpan as{span.addr, span.romOffset, span.size, span.fileId, span.line, span.cLine};
+		if(span.hasAddr) _addrSpans.push_back(as);
+		if(span.romOffset != NoRomOffset) _romOffsetSpans.push_back(as);
+	}
+	std::sort(_addrSpans.begin(), _addrSpans.end(),
+		[](const AddrSpan& a, const AddrSpan& b) { return a.addr < b.addr; });
+	std::sort(_romOffsetSpans.begin(), _romOffsetSpans.end(),
+		[](const AddrSpan& a, const AddrSpan& b) { return a.romOffset < b.romOffset; });
+
+	_symbols = std::move(labels);
+	_romSymbols.clear();
+	for(auto& sym : _symbols) {
+		if(sym.romOffset != NoRomOffset) _romSymbols.push_back(sym);
+	}
+	std::sort(_symbols.begin(), _symbols.end(),
+		[](const SymEntry& a, const SymEntry& b) { return a.addr < b.addr; });
+	std::sort(_romSymbols.begin(), _romSymbols.end(),
+		[](const SymEntry& a, const SymEntry& b) { return a.romOffset < b.romOffset; });
+	_scopes = std::move(scopes);
+
+	_loaded = true;
+}
+
+SourceLocation SourceMapper::LookupSpan(const std::vector<AddrSpan>& spans, uint32_t key, bool byRom) const
+{
+	if(spans.empty()) return {};
+
+	auto keyOf = [byRom](const AddrSpan& span) { return byRom ? span.romOffset : span.addr; };
+
+	// Binary search: find the last span that starts at or before the key
+	auto it = std::upper_bound(spans.begin(), spans.end(), key,
+		[&](uint32_t k, const AddrSpan& span) { return k < keyOf(span); });
+
+	// Spans overlap: a C line covers the assembly generated for it, and a
+	// line can cover a macro expansion. A C line wins, else the smallest.
+	const AddrSpan* best = nullptr;
+	auto checkIt = it;
+	while(checkIt != spans.begin()) {
+		--checkIt;
+		uint32_t start = keyOf(*checkIt);
+		if(start + checkIt->size <= key) {
+			// Stop once we are clearly past any span that could contain it
+			if(start + 256 < key) break;
+		}
+		if(key >= start && key < start + checkIt->size) {
+			bool better = !best
+				|| (checkIt->cLine != best->cLine ? checkIt->cLine : checkIt->size < best->size);
+			if(better) best = &*checkIt;
+		}
+	}
+
+	SourceLocation loc;
+	if(best) {
+		loc.valid = true;
+		loc.line = best->line;
+		loc.file = DisplayName(best->fileId);
+		loc.cLine = best->cLine;
+		loc.fileFound = best->fileId >= 0 && best->fileId < (int)_fileFound.size() && _fileFound[best->fileId];
+	}
+	return loc;
+}
+
+SourceLocation SourceMapper::GetSourceLocation(uint32_t cpuAddr) const
+{
+	return LookupSpan(_addrSpans, cpuAddr, false);
+}
+
+SourceLocation SourceMapper::GetSourceLocationByRomOffset(uint32_t romOffset) const
+{
+	return LookupSpan(_romOffsetSpans, romOffset, true);
 }
 
 uint32_t SourceMapper::LookupFileLine(
@@ -328,38 +509,9 @@ void SourceMapper::NoteClientPath(const std::string& path)
 	int fileId = FindFileId(path);
 	if(fileId >= 0) {
 		_displayNames[fileId] = path;
+		_fileFound[fileId] = true;
 		_fileNameToId[path] = fileId;
 	}
-}
-
-SourceLocation SourceMapper::GetSourceLocationByRomOffset(uint32_t romOffset) const
-{
-	if(_romOffsetSpans.empty()) return {};
-
-	auto it = std::upper_bound(_romOffsetSpans.begin(), _romOffsetSpans.end(), romOffset,
-		[](uint32_t off, const AddrSpan& span) { return off < span.romOffset; });
-
-	SourceLocation best;
-	uint32_t bestSize = 0xFFFFFFFF;
-
-	auto checkIt = it;
-	while(checkIt != _romOffsetSpans.begin()) {
-		--checkIt;
-		if(checkIt->romOffset + checkIt->size <= romOffset) {
-			// Stop once we are clearly past any span that could contain it
-			if(checkIt->romOffset + 256 < romOffset) break;
-		}
-		if(romOffset >= checkIt->romOffset && romOffset < checkIt->romOffset + checkIt->size) {
-			if(checkIt->size < bestSize) {
-				bestSize = checkIt->size;
-				best.valid = true;
-				best.line = checkIt->line;
-				best.file = DisplayName(checkIt->fileId);
-			}
-		}
-	}
-
-	return best;
 }
 
 std::string SourceMapper::LookupSymbol(const std::vector<SymEntry>& syms,
@@ -389,12 +541,38 @@ std::string SourceMapper::LookupSymbol(const std::vector<SymEntry>& syms,
 	return "";
 }
 
+std::string SourceMapper::LookupScope(uint32_t key, bool byRom) const
+{
+	const SymEntry* best = nullptr;
+	for(const SymEntry& scope : _scopes) {
+		uint32_t start = byRom ? scope.romOffset : scope.addr;
+		if(byRom && start == NoRomOffset) continue;
+		if(key >= start && key - start < scope.size && (!best || scope.size < best->size)) {
+			best = &scope;
+		}
+	}
+	return best ? best->name : "";
+}
+
 std::string SourceMapper::GetSymbolName(uint32_t cpuAddr) const
 {
-	return LookupSymbol(_symbols, cpuAddr, false);
+	std::string scope = LookupScope(cpuAddr, false);
+	return scope.empty() ? LookupSymbol(_symbols, cpuAddr, false) : scope;
 }
 
 std::string SourceMapper::GetSymbolNameByRomOffset(uint32_t romOffset) const
 {
-	return LookupSymbol(_romSymbols, romOffset, true);
+	std::string scope = LookupScope(romOffset, true);
+	return scope.empty() ? LookupSymbol(_romSymbols, romOffset, true) : scope;
+}
+
+std::string SourceMapper::GetLabelAtRomOffset(uint32_t romOffset) const
+{
+	// A function starting here, else any label here
+	for(const SymEntry& scope : _scopes) {
+		if(scope.romOffset == romOffset) return scope.name;
+	}
+	auto it = std::lower_bound(_romSymbols.begin(), _romSymbols.end(), romOffset,
+		[](const SymEntry& sym, uint32_t k) { return sym.romOffset < k; });
+	return it != _romSymbols.end() && it->romOffset == romOffset ? it->name : "";
 }

@@ -1,0 +1,29 @@
+; this file was created with wlalink by ville helin <ville.helin@iki.fi>.
+; wla symbolic information for "game.sfc".
+
+[information]
+version 3
+wlasymbol true
+
+[labels]
+00:8000 reset
+00:8010 main
+00:8014 main_loop
+7e:0100 player_x
+
+[definitions]
+00000010 _sizeof_main
+
+[source files v2]
+0001:0001 a6bf3a75 game.s
+0001:0002 00000000 "lib/util.s" ; a quoted path
+
+[rom checksum]
+02da2797
+
+[addr-to-line mapping v2]
+00000000 00:0000 8000 0001:0001:00000005
+00000002 00:0002 8002 0001:0001:00000006
+00000010 00:0010 8010 0001:0001:0000000c
+00000014 00:0014 8014 0001:0001:0000000d
+00000020 00:0020 8020 0001:0002:00000003

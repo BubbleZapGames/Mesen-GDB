@@ -44,6 +44,12 @@ bin/linux-x64/Release/mesen-gdb game.sfc --headless --script tests/camera
 bin/linux-x64/Release/mesen-gdb --dap
 ```
 
+The DAP server maps addresses to source through a cc65-format `.dbg` (R65, cc65 C) or a WLA-DX
+`.sym` (`Core/Debugger/DAP/SourceMapper`): the launch's `dbgPath`, else the ROM's name with `.dbg`,
+then `.sym`, then `main.dbg`. In a cc65 C build a C line (`type=1`) wins over the assembly
+generated for it, and stepping from a C line stops only at C lines. `tests/roms/hello_c` is the
+C test ROM (cc65, NES).
+
 ### Interactive CLI Commands
 
 `step [N]`, `next`, `finish`, `continue`, `regs`, `disasm [addr] [count]`, `mem <addr> <len>`, `break <addr>`, `watch <addr>`, `delete <id>`, `info break`, `info regions`, `info cpu`, `backtrace`, `trace <file>`, `dump <type> <file>`, `reset`, `set <addr> <val>`, `frames <N>`, `rwatch <cond>`, `screenshot <file>`, `quit`, and:

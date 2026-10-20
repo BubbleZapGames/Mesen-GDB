@@ -129,6 +129,7 @@ bool DbgFileParser::Parse(const std::string& path, DbgData& out)
 				if(k == "id") ctx->l->id = atoi(v.c_str());
 				else if(k == "file") ctx->l->fileId = atoi(v.c_str());
 				else if(k == "line") ctx->l->line = atoi(v.c_str());
+				else if(k == "type") ctx->l->type = atoi(v.c_str());
 				else if(k == "span") *ctx->spanStr = v;
 			}, &ctx);
 			if(!spanStr.empty()) {
@@ -160,6 +161,7 @@ bool DbgFileParser::Parse(const std::string& path, DbgData& out)
 				DbgScope* sc = (DbgScope*)ctx;
 				if(k == "id") sc->id = atoi(v.c_str());
 				else if(k == "name") sc->name = v;
+				else if(k == "type") sc->type = v;
 				else if(k == "parent") sc->parentId = atoi(v.c_str());
 				else if(k == "sym") sc->symId = atoi(v.c_str());
 				else if(k == "size") sc->size = ParseHexOrDec(v);

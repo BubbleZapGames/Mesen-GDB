@@ -235,7 +235,8 @@ TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/t
 TESTOBJ := $(call objs,$(TESTSRC))
 DAPTESTOBJ := $(call objs,Core/Debugger/DAP/DapJson.cpp Core/Debugger/DAP/DapMessageReader.cpp \
               Core/Debugger/DAP/DapMessageWriter.cpp Core/Debugger/DAP/DbgFileParser.cpp \
-              Core/Debugger/DAP/SourceMapper.cpp Core/Debugger/DAP/CpuStateSerializer.cpp \
+              Core/Debugger/DAP/SourceMapper.cpp Core/Debugger/DAP/WlaSymParser.cpp \
+              Core/Debugger/DAP/CpuStateSerializer.cpp \
               Utilities/SimpleLock.cpp Utilities/Timer.cpp GDB/cli_symbols.cpp)
 
 test: $(TESTOBJ) $(DAPTESTOBJ)

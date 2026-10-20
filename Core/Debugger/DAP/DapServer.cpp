@@ -212,6 +212,27 @@ void DapServer::HandleInitialize(const JsonValue& request)
 // CallstackManager keeps at most this many calls, and copies them all out
 static const uint32_t MAX_CALLSTACK = 512;
 
+// The bytes an iNES file holds before PRG-ROM (the header, and a trainer if
+// it has one), or 0 for any other ROM
+static uint32_t InesHeaderSize(const std::string& romPath)
+{
+	std::ifstream rom(romPath, std::ios::binary);
+	uint8_t header[16] = {};
+	if(!rom.read((char*)header, sizeof(header)) || memcmp(header, "NES\x1A", 4) != 0) {
+		return 0;
+	}
+	return (header[6] & 0x04) ? 16 + 512 : 16;
+}
+
+// A WLA-DX symbol file rather than a .dbg
+static bool IsSymFile(const std::string& path)
+{
+	if(path.size() < 4) return false;
+	std::string ext = path.substr(path.size() - 4);
+	for(char& c : ext) c = (char)tolower((unsigned char)c);
+	return ext == ".sym";
+}
+
 void DapServer::HandleLaunch(const JsonValue& request)
 {
 	const JsonValue& args = request["arguments"];
@@ -240,30 +261,53 @@ void DapServer::HandleLaunch(const JsonValue& request)
 		return;
 	}
 
-	// Load .dbg symbol file: explicit path or auto-detect from ROM path
+	// A .dbg counts an iNES header in its ROM offsets; Mesen's don't
+	uint32_t inesHeader = InesHeaderSize(romPath);
+	if(inesHeader > 0) {
+		_sourceMapper.SetNesRom(inesHeader);
+	}
+
+	// Symbols: the dbgPath given (a .dbg or a WLA-DX .sym), else the ROM's
+	// name with .dbg, then with .sym, then main.dbg beside it
 	std::string dbgPath = args["dbgPath"].GetString();
 	if(dbgPath.empty()) {
-		// Auto-detect: try replacing ROM extension with .dbg
 		size_t dot = romPath.find_last_of('.');
-		if(dot != std::string::npos) {
-			dbgPath = romPath.substr(0, dot) + ".dbg";
+		size_t slash = romPath.find_last_of("/\\");
+		std::vector<std::string> candidates;
+		if(dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+			candidates.push_back(romPath.substr(0, dot) + ".dbg");
+			candidates.push_back(romPath.substr(0, dot) + ".sym");
 		}
-		// Also try common patterns: same directory, "main.dbg"
-		if(!dbgPath.empty()) {
-			std::ifstream test(dbgPath);
-			if(!test.good()) {
-				// Try sibling "main.dbg" in same directory
-				size_t slash = romPath.find_last_of("/\\");
-				if(slash != std::string::npos) {
-					std::string dir = romPath.substr(0, slash + 1);
-					dbgPath = dir + "main.dbg";
-				}
+		candidates.push_back(romPath.substr(0, slash == std::string::npos ? 0 : slash + 1) + "main.dbg");
+		for(const std::string& candidate : candidates) {
+			if(std::ifstream(candidate).good()) {
+				dbgPath = candidate;
+				break;
 			}
 		}
 	}
 	if(!dbgPath.empty()) {
-		if(_sourceMapper.LoadDbgFile(dbgPath)) {
+		bool loaded;
+		if(IsSymFile(dbgPath)) {
+			// A .sym records labels as CPU addresses; the debugger knows
+			// where in the ROM each one is
+			DebuggerRequest req = _emu->GetDebugger(false);
+			Debugger* dbg = req.GetDebugger();
+			auto cpuTypes = _emu->GetCpuTypes();
+			loaded = _sourceMapper.LoadSymFile(dbgPath, [&](uint32_t cpuAddr) -> uint32_t {
+				if(!dbg || cpuTypes.empty()) return SourceMapper::NoRomOffset;
+				AddressInfo relAddr { (int32_t)cpuAddr, DebugUtilities::GetCpuMemoryType(cpuTypes[0]) };
+				AddressInfo absAddr = dbg->GetAbsoluteAddress(relAddr);
+				bool inRom = absAddr.Address >= 0 && DebugUtilities::IsRom(absAddr.Type);
+				return inRom ? (uint32_t)absAddr.Address : SourceMapper::NoRomOffset;
+			});
+		} else {
+			loaded = _sourceMapper.LoadDbgFile(dbgPath);
+		}
+		if(loaded) {
 			fprintf(stderr, "[DAP] Loaded symbols from: %s\n", dbgPath.c_str());
+		} else {
+			fprintf(stderr, "[DAP] Could not read symbols from: %s\n", dbgPath.c_str());
 		}
 	}
 
@@ -383,7 +427,7 @@ void DapServer::HandleStackTrace(const JsonValue& request)
 			if(!loc.valid) {
 				loc = _sourceMapper.GetSourceLocation(addr);
 			}
-			if(loc.valid && !loc.file.empty()) {
+			if(loc.valid && !loc.file.empty() && loc.fileFound) {
 				frame.Set("line", JsonValue::MakeNumber(loc.line));
 				frame.Set("column", JsonValue::MakeNumber(1));
 				auto source = JsonValue::MakeObject();
@@ -391,7 +435,8 @@ void DapServer::HandleStackTrace(const JsonValue& request)
 				source.Set("path", JsonValue::MakeString(loc.file));
 				frame.Set("source", std::move(source));
 			} else {
-				// No line mapping for this address. Emit no source at all: a
+				// No line mapping for this address, or none to a file on this
+				// disk (a library built elsewhere). Emit no source at all: a
 				// DAP source is only loadable through a path or a non-zero
 				// sourceReference, and one carrying neither makes the client
 				// ask for its content with a "source" request we do not serve.
@@ -567,11 +612,14 @@ static const int STEP_TIME_BUDGET_MS = 5000;
 // off as code we have no source for.
 static const uint32_t CALLEE_PROBE_INSTRUCTIONS = 64;
 
-void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth, uint32_t* pcOut)
+void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint32_t& depth, uint32_t* pcOut, bool* cLineOut)
 {
 	file.clear();
 	line = 0;
 	depth = 0;
+	if(cLineOut) {
+		*cLineOut = false;
+	}
 
 	DebuggerRequest req = _emu->GetDebugger(false);
 	Debugger* dbg = req.GetDebugger();
@@ -598,6 +646,9 @@ void DapServer::CurrentLocation(CpuType cpu, std::string& file, int& line, uint3
 	if(loc.valid) {
 		file = loc.file;
 		line = loc.line;
+		if(cLineOut) {
+			*cLineOut = loc.cLine;
+		}
 	}
 
 	CallstackManager* csm = dbg->GetCallstackManager(cpu);
@@ -634,7 +685,10 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 	int startLine = 0;
 	uint32_t startDepth = 0;
 	uint32_t lastPc = 0;
-	CurrentLocation(cpu, startFile, startLine, startDepth, &lastPc);
+	bool startInC = false;
+	CurrentLocation(cpu, startFile, startLine, startDepth, &lastPc, &startInC);
+	// Stepping C, the assembly under it is no place to stop: not cc65's
+	// runtime helpers a statement calls, nor the generated code of a line
 	// A loop that lives on one line (`loop { wait_nmi!(); }`) never reaches
 	// another line; coming back round to where the step began ends it instead
 	uint32_t startPc = lastPc;
@@ -695,7 +749,9 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 		}
 
 		uint32_t pc = 0;
-		CurrentLocation(cpu, file, line, depth, &pc);
+		bool inC = false;
+		CurrentLocation(cpu, file, line, depth, &pc, &inC);
+		bool atSource = line != 0 && (!startInC || inC);
 		halted = pc == lastPc;
 		lastPc = pc;
 		if(pc != startPc) {
@@ -709,7 +765,7 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 			break;
 		}
 		if(depth > startDepth) {
-			if(intoCalls && line != 0) {
+			if(intoCalls && atSource) {
 				// Stepped into something we have source for.
 				break;
 			}
@@ -738,7 +794,7 @@ void DapServer::StepSourceLine(const JsonValue& request, bool intoCalls)
 			continue;
 		}
 		probed = 0;
-		if(line != 0 && (line != startLine || file != startFile)) {
+		if(atSource && (line != startLine || file != startFile)) {
 			break;
 		}
 		onSameLine++;
@@ -1156,6 +1212,16 @@ void DapServer::HandleDisassemble(const JsonValue& request)
 			}
 			if(!bytes.empty()) bytes.pop_back(); // trim trailing space
 			instr.Set("instructionBytes", JsonValue::MakeString(bytes));
+
+			// The label at this instruction, if the symbols name one
+			AddressInfo relAddr { line.Address, DebugUtilities::GetCpuMemoryType(primaryCpu) };
+			AddressInfo absAddr = dbg->GetAbsoluteAddress(relAddr);
+			if(absAddr.Address >= 0 && DebugUtilities::IsRom(absAddr.Type)) {
+				std::string label = _sourceMapper.GetLabelAtRomOffset((uint32_t)absAddr.Address);
+				if(!label.empty()) {
+					instr.Set("symbol", JsonValue::MakeString(label));
+				}
+			}
 
 			instructions.Push(std::move(instr));
 		}
