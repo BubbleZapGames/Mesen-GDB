@@ -461,6 +461,7 @@ static int RunDapMode(CliArgs& args, FILE* dapOutput, Frontend* frontend)
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GsuDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::NecDspDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::Cx4DebuggerEnabled, true);
+	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::St018DebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::GbDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::NesDebuggerEnabled, true);
 	emu->GetSettings()->SetDebuggerFlag(DebuggerFlags::PceDebuggerEnabled, true);
