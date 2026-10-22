@@ -1240,13 +1240,14 @@ void DapServer::HandleDisassemble(const JsonValue& request)
 	const JsonValue& args = request["arguments"];
 	std::string memRef = args["memoryReference"].GetString();
 	int offset = 0;
+	int instructionOffset = 0;
 	int count = 20;
 
 	if(args["offset"].GetType() == JsonValue::Type::Number) {
 		offset = (int)args["offset"].GetNumber();
 	}
 	if(args["instructionOffset"].GetType() == JsonValue::Type::Number) {
-		offset += (int)args["instructionOffset"].GetNumber();
+		instructionOffset = (int)args["instructionOffset"].GetNumber();
 	}
 	if(args["instructionCount"].GetType() == JsonValue::Type::Number) {
 		count = (int)args["instructionCount"].GetNumber();
@@ -1268,6 +1269,12 @@ void DapServer::HandleDisassemble(const JsonValue& request)
 	DebuggerRequest req = _emu->GetDebugger(false);
 	Debugger* dbg = req.GetDebugger();
 	if(dbg && count > 0) {
+		// instructionOffset counts instructions, which vary in length: let
+		// Mesen's disassembly (which knows where each one starts) step them
+		if(instructionOffset != 0) {
+			addr = (uint32_t)dbg->GetDisassembler()->GetDisassemblyRowAddress(primaryCpu, addr, instructionOffset);
+		}
+
 		std::vector<CodeLineData> output(count);
 		uint32_t actual = dbg->GetDisassembler()->GetDisassemblyOutput(
 			primaryCpu, addr, output.data(), count);
@@ -1275,8 +1282,8 @@ void DapServer::HandleDisassemble(const JsonValue& request)
 		for(uint32_t i = 0; i < actual; i++) {
 			CodeLineData& line = output[i];
 
-			// Skip empty/data lines
-			if(line.Flags & LineFlags::Empty) continue;
+			// Instructions only: not blank, label or comment rows
+			if(line.Address < 0 || (line.Flags & (LineFlags::Empty | LineFlags::Label | LineFlags::Comment))) continue;
 
 			auto instr = JsonValue::MakeObject();
 
