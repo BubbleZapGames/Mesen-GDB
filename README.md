@@ -207,8 +207,8 @@ With symbols loaded you can:
 - evaluate expressions, including on hover;
 - read and write memory.
 
-Each CPU in the console (on a SNES, the 65816 and the SPC700) appears as its
-own thread.
+Each CPU in the console appears as its own thread, except the SNES's SPC700
+sound CPU, whose call stack doesn't work yet.
 
 ## Settings
 

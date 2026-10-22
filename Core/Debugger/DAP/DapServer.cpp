@@ -169,10 +169,22 @@ const char* DapServer::CpuTypeName(CpuType cpu)
 	}
 }
 
+// Not offered as a thread: the SPC700's call stack doesn't work yet
+static bool IsHiddenThread(CpuType cpu)
+{
+	return cpu == CpuType::Spc;
+}
+
 // ── Stopped / terminated events (called from notification listener) ──
 
 void DapServer::SendStoppedEvent(const char* reason, CpuType cpu)
 {
+	// Every CPU stops together; name one the client was told about
+	auto cpuTypes = _emu->GetCpuTypes();
+	if(IsHiddenThread(cpu) && !cpuTypes.empty()) {
+		cpu = cpuTypes[0];
+	}
+
 	auto evt = MakeEvent(DapEvent::Stopped);
 	auto body = JsonValue::MakeObject();
 	body.Set("reason", JsonValue::MakeString(reason));
@@ -359,6 +371,7 @@ void DapServer::HandleThreads(const JsonValue& request)
 
 	auto cpuTypes = _emu->GetCpuTypes();
 	for(CpuType cpu : cpuTypes) {
+		if(IsHiddenThread(cpu)) continue;
 		auto thread = JsonValue::MakeObject();
 		thread.Set("id", JsonValue::MakeNumber(CpuTypeToThreadId(cpu)));
 		thread.Set("name", JsonValue::MakeString(CpuTypeName(cpu)));
