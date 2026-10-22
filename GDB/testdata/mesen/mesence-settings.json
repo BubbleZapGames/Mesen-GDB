@@ -1,0 +1,22 @@
+{
+  "Version": "2.2.1",
+  "Snes": {
+    "HighResBlendMode": "Blend",
+    "Port1": {
+      "Type": "SnesController",
+      "TurboSpeed": 2,
+      "Mapping1": { "A": 44, "B": 62, "MouseButtons": null, "SuperScopeButtons": null }
+    },
+    "Port1A": { "Type": "SnesController", "Mapping1": { "A": 0 } },
+    "Port2": { "Type": "SnesBlueRetroController" }
+  },
+  "Nes": {
+    "Port1": { "Type": "VbController" }
+  },
+  "Cv": {
+    "Port1": { "Type": "ColecoVisionController", "Mapping1": { "ColecoVisionControllerButtons": null } },
+    "Tone1Vol": 70
+  },
+  "Gameboy": { "Model": "AutoFavorBest" },
+  "Ws": { "AudioMode": "Speaker", "AutoRotate": false }
+}

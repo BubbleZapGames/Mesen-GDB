@@ -155,7 +155,7 @@ endif
 ifeq ($(MESENOS),windows)
 	# One .exe, without the MinGW runtime DLLs (libwinpthread among them).
 	LINKOPTIONS += -static
-	WINLIBS := -lwinmm
+	WINLIBS := -lwinmm -lshell32
 	ifeq ($(DEBUG),0)
 		# SDL's static library carries ~10 MB of DWARF debug info.
 		LINKOPTIONS += -Wl,--strip-debug
@@ -231,13 +231,13 @@ $(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ)
 
 # Unit tests — only links DAP .cpp files (no emulator core needed)
 TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp \
-           GDB/test_cpu_serializer.cpp GDB/test_cli_symbols.cpp
+           GDB/test_cpu_serializer.cpp GDB/test_cli_symbols.cpp GDB/test_mesen_settings.cpp
 TESTOBJ := $(call objs,$(TESTSRC))
 DAPTESTOBJ := $(call objs,Core/Debugger/DAP/DapJson.cpp Core/Debugger/DAP/DapMessageReader.cpp \
               Core/Debugger/DAP/DapMessageWriter.cpp Core/Debugger/DAP/DbgFileParser.cpp \
               Core/Debugger/DAP/SourceMapper.cpp Core/Debugger/DAP/WlaSymParser.cpp \
               Core/Debugger/DAP/CpuStateSerializer.cpp \
-              Utilities/SimpleLock.cpp Utilities/Timer.cpp GDB/cli_symbols.cpp)
+              Utilities/SimpleLock.cpp Utilities/Timer.cpp GDB/cli_symbols.cpp GDB/mesen_settings.cpp)
 
 test: $(TESTOBJ) $(DAPTESTOBJ)
 	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o bin/dap-test$(EXE) $(TESTOBJ) $(DAPTESTOBJ) -pthread $(FSLIB) $(WINLIBS)

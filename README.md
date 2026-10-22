@@ -211,6 +211,34 @@ With symbols loaded you can:
 Each CPU in the console (on a SNES, the 65816 and the SPC700) appears as its
 own thread.
 
+## Settings
+
+With a game window, mesen-gdb runs with the settings of your installed Mesen:
+your keys and gamepads, video, audio, and each console's options. It reads
+them from `settings.json` in MesenCE's folder, or else Mesen2's:
+
+| OS | Folder |
+|---|---|
+| Linux, macOS | `$XDG_CONFIG_HOME/MesenCE` or `/Mesen2` (by default `~/.config/...`) |
+| Windows | `Documents\MesenCE` or `Documents\Mesen2` |
+
+For a portable Mesen (`settings.json` beside the executable), pass
+`--mesen-folder <dir>`. mesen-gdb prints which file it used. Change settings
+in Mesen; mesen-gdb only reads them.
+
+- **Headless** (`--headless`) uses built-in defaults instead, so tests and
+  scripts run the same on every machine.
+- **Shared:** settings and `Firmware/` (BIOS and boot ROMs). Battery saves,
+  save states and CDL files stay in mesen-gdb's own folder (`~/.mesen-gdb`),
+  so neither program overwrites the other's.
+- **Not applied:** Mesen's debugger options (break on BRK and the like),
+  shortcut keys, and its save folder overrides.
+- **Gamepads:** each OS's Mesen numbers gamepad buttons its own way;
+  mesen-gdb translates them to its own (SDL) buttons. A button with no
+  match, such as a raw axis, is left unmapped and named in a warning.
+- **No Mesen installed:** controller 1 is on the keyboard (arrows, S A X Z,
+  Q W, E D) and the first gamepad; controller 2 on the second gamepad.
+
 ## Testing ROMs
 
 ### Test scripts
@@ -382,6 +410,7 @@ Every call has a deadline, so a test can fail but never hang, and
 | `--break <addr>` | Set a breakpoint before starting (an address or symbol; repeatable) |
 | `--movie <file.mmo>` | Play a Mesen movie from power-on |
 | `--ram-init zeros\|ones\|random` | SNES power-on RAM contents |
+| `--mesen-folder <dir>` | The folder of Mesen's `settings.json`, for a portable Mesen ([Settings](#settings)) |
 | `--sym <file>` | WLA-DX symbols (default: the ROM's name with `.sym`) |
 | `--dbg <file>` | cc65 `.dbg` symbols (default: the ROM's name with `.dbg`, or `main.dbg` beside it) |
 | `--json` | JSON output: batch results, or the JSON protocol at the prompt |

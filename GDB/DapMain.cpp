@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
 
 #include "Core/Shared/Emulator.h"
 #include "Core/Shared/EmuSettings.h"
@@ -26,6 +27,7 @@
 #include "Core/Debugger/DebugTypes.h"
 #include "Core/Debugger/DebugUtilities.h"
 #include "Utilities/VirtualFile.h"
+#include "Core/Shared/RomInfo.h"
 #include "Utilities/FolderUtilities.h"
 #include "Core/Shared/Movies/MovieManager.h"
 
@@ -37,6 +39,7 @@
 #include "console_info.h"
 #include "bus_logging.h"
 #include "cli_platform.h"
+#include "mesen_settings.h"
 
 #include "Core/Debugger/DAP/DapServer.h"
 #include "Core/Debugger/DAP/DapNotificationListener.h"
@@ -103,6 +106,58 @@ static void ApplyDefaultKeys(SnesConfig& snes)
 		snes.Port2.Keys.Mapping1 = PadButtons("Pad2 ");
 		snes.Port2.Keys.Mapping2 = PadStick("Pad2 ");
 	}
+}
+
+// The installed Mesen's settings (mesen_settings.h), for a session with a
+// game window. Headless sessions keep the built-in defaults, so tests and
+// scripts behave the same on every machine. Kept alive for the session: each
+// ROM that loads gets its console's video override, as in Mesen.
+class MesenSettingsListener final : public INotificationListener
+{
+public:
+	MesenSettingsListener(Emulator* emu, std::unique_ptr<MesenSettings> settings)
+		: _emu(emu), _settings(std::move(settings)) {}
+
+	void ProcessNotification(ConsoleNotificationType type, void* parameter) override
+	{
+		if(type == ConsoleNotificationType::GameLoaded) {
+			ApplyMesenVideoOverride(_emu->GetSettings(), *_settings, _emu->GetConsoleType(), _emu->GetRomInfo().Format);
+		}
+	}
+
+private:
+	Emulator* _emu;
+	std::unique_ptr<MesenSettings> _settings;
+};
+
+// Apply the settings.json found from folderOption (FindMesenFolder) and use
+// Mesen's firmware. Call before anything that has to override a setting.
+static std::shared_ptr<MesenSettingsListener> UseMesenSettings(Emulator* emu, const std::string& folderOption)
+{
+	std::string folder = FindMesenFolder(folderOption);
+	if(folder.empty()) {
+		fprintf(stderr, "No Mesen settings found (MesenCE or Mesen2); using defaults\n");
+		return nullptr;
+	}
+	std::string path = (std::filesystem::path(folder) / "settings.json").string();
+	auto settings = std::make_unique<MesenSettings>();
+	std::string error;
+	if(!LoadMesenSettings(path, *settings, error)) {
+		fprintf(stderr, "Mesen settings %s %s; using defaults\n", path.c_str(), error.c_str());
+		return nullptr;
+	}
+	for(const std::string& warning : settings->Warnings) {
+		fprintf(stderr, "Mesen settings: %s\n", warning.c_str());
+	}
+	ApplyMesenSettings(emu->GetSettings(), *settings);
+	// Only firmware is shared: saves, save states and CDL files stay in
+	// mesen-gdb's folder, where they can't overwrite Mesen's own
+	FolderUtilities::SetFolderOverrides("", "", "", (std::filesystem::path(folder) / "Firmware").string());
+	fprintf(stderr, "Using Mesen settings from %s\n", path.c_str());
+
+	auto listener = std::make_shared<MesenSettingsListener>(emu, std::move(settings));
+	emu->GetNotificationManager()->RegisterNotificationListener(listener);
+	return listener;
 }
 
 // Frontend - the game window, sound, keyboard and gamepads of a session that
@@ -272,6 +327,7 @@ struct CliArgs {
 	bool logHdma = false;
 	bool turbo = false;
 	std::string ramInit;   // zeros / ones / random: power-on RAM, pinned for reproducible runs
+	std::string mesenFolder;   // --mesen-folder: where Mesen's settings.json is
 };
 
 static uint32_t ParseAddr(const std::string& s)
@@ -322,6 +378,9 @@ static void PrintUsage(const char* prog)
 		"  --sym <file>            WLA-DX symbols (default: the ROM's name with .sym)\n"
 		"  --dbg <file>            cc65 .dbg symbols (default: the ROM's name with\n"
 		"                          .dbg, or main.dbg beside it)\n"
+		"  --mesen-folder <dir>    The folder of Mesen's settings.json, for a portable\n"
+		"                          Mesen (default: MesenCE's, then Mesen2's). Used\n"
+		"                          with a game window, not --headless\n"
 		"  --log-bus               Log SNES bus writes to stdout\n"
 		"  --log-vram              Log SNES VRAM writes to stdout\n"
 		"  --log-hdma              Log SNES HDMA transfers to stdout\n"
@@ -411,6 +470,8 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			args.symPath = argv[++i];
 		} else if(arg == "--dbg" && i + 1 < argc) {
 			args.dbgPath = argv[++i];
+		} else if(arg == "--mesen-folder" && i + 1 < argc) {
+			args.mesenFolder = argv[++i];
 		} else if(arg == "--turbo") {
 			args.turbo = true;
 		} else if(arg[0] == '-') {
@@ -441,6 +502,12 @@ static int RunDapMode(CliArgs& args, FILE* dapOutput, Frontend* frontend)
 	std::unique_ptr<Emulator> emu(new Emulator());
 	emu->Initialize(false);
 	KeyManager::SetSettings(emu->GetSettings());
+
+	// Mesen's settings first: everything below overrides them
+	std::shared_ptr<MesenSettingsListener> mesenSettings;
+	if(frontend) {
+		mesenSettings = UseMesenSettings(emu.get(), args.mesenFolder);
+	}
 
 	// Video/audio/input. --dap on its own shows the game window and plays
 	// sound while debugging; pass --headless to run without one.
@@ -558,6 +625,12 @@ static int RunCliMode(CliArgs& args, Frontend* frontend)
 	std::unique_ptr<Emulator> emu(new Emulator());
 	emu->Initialize(false);  // no shortcut keys
 	KeyManager::SetSettings(emu->GetSettings());
+
+	// Mesen's settings first: everything below overrides them
+	std::shared_ptr<MesenSettingsListener> mesenSettings;
+	if(frontend) {
+		mesenSettings = UseMesenSettings(emu.get(), args.mesenFolder);
+	}
 
 	// 2. The game window, unless headless
 	if(frontend) {

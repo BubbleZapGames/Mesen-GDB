@@ -69,7 +69,8 @@ C test ROM (cc65, NES), `tests/roms/hello_asm` the assembly-only one (ca65, NES)
   has named a port, it drives that port instead of the keyboard and gamepads.
 
 With a game window, the keyboard and gamepads play (`Sdl/SdlKeyManager`, the same on every
-platform), with Mesen's default layouts when the settings have none: controller 1 on the arrows
+platform), mapped by the installed Mesen's settings (`mesen_settings.*`, below), or with Mesen's
+default layouts when there are none: controller 1 on the arrows
 and S A X Z (A B X Y), Q W (L R), E D (Select Start) by key position, and on the first gamepad
 (buttons by position, d-pad, left stick); controller 2 on the second gamepad.
 `tests/roms/pad/pad.sfc` shows controller 1 (`PAD`, and a red screen while a button is held).
@@ -150,6 +151,15 @@ GDB/               The custom code in this fork (~1900 lines, 9 files)
   debugger_cli.*   Interactive GDB-style REPL
   cli_symbols.*    .sym/.dbg symbols and address parsing for the CLI and its options
   cli_platform.*   POSIX/Windows differences: stdio descriptors, home folder, stdin lines
+  mesen_settings.* The installed Mesen's settings.json (MesenCE's folder, else Mesen2's, or
+                   --mesen-folder), read the way Mesen's C# UI applies it (UI/Config/*.cs at
+                   dcf37178^). Windowed sessions only. A key missing from the file takes the UI's
+                   default, not the core struct's (MesenSettings()). Gamepad codes are translated
+                   from that OS's Mesen numbering to SdlKeyManager's. Not applied: Debug, shortcuts,
+                   folder overrides. DapMain applies it before its own forced settings (debugger
+                   flags, ConsoleMode, headless speed, --ram-init), which must come after:
+                   Set*Config replaces a whole struct. _apply.cpp needs the core; the reader
+                   doesn't, so `make test` links it alone
   formatter.*      Human-readable and JSON output formatting
   cli_notification.h   Notification listener bridging emulator events to CLI
   console_info.h   Console/CPU type detection and memory region mapping
