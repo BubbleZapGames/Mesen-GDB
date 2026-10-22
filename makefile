@@ -237,7 +237,8 @@ DAPTESTOBJ := $(call objs,Core/Debugger/DAP/DapJson.cpp Core/Debugger/DAP/DapMes
               Core/Debugger/DAP/DapMessageWriter.cpp Core/Debugger/DAP/DbgFileParser.cpp \
               Core/Debugger/DAP/SourceMapper.cpp Core/Debugger/DAP/WlaSymParser.cpp \
               Core/Debugger/DAP/CpuStateSerializer.cpp \
-              Utilities/SimpleLock.cpp Utilities/Timer.cpp GDB/cli_symbols.cpp GDB/mesen_settings.cpp)
+              Utilities/SimpleLock.cpp Utilities/Timer.cpp Utilities/FolderUtilities.cpp \
+              GDB/cli_symbols.cpp GDB/mesen_settings.cpp)
 
 test: $(TESTOBJ) $(DAPTESTOBJ)
 	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o bin/dap-test$(EXE) $(TESTOBJ) $(DAPTESTOBJ) -pthread $(FSLIB) $(WINLIBS)

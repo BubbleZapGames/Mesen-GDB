@@ -32,6 +32,8 @@ public:
 
 	static vector<string> GetFolders(string rootFolder);
 	static vector<string> GetFilesInFolder(string rootFolder, std::unordered_set<string> extensions, bool recursive);
+	//The most recently modified file in folder (not its subfolders) with this extension (".dbg"), or ""
+	static string GetNewestFile(string folder, string extension);
 
 	static string GetFilename(string filepath, bool includeExtension);
 	static string GetExtension(string filename);

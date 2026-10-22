@@ -1,39 +1,20 @@
 #include "cli_symbols.h"
 #include "Core/Debugger/DAP/DbgFileParser.h"
+#include "Utilities/FolderUtilities.h"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 
-static bool FileExists(const std::string& path)
-{
-	std::ifstream f(path);
-	return f.is_open();
-}
-
-// WithExtension - *path* with its extension (if any) replaced by *ext*.
-static std::string WithExtension(const std::string& path, const char* ext)
-{
-	size_t slash = path.find_last_of("/\\");
-	size_t dot = path.find_last_of('.');
-	if(dot == std::string::npos || (slash != std::string::npos && dot < slash)) return path + ext;
-	return path.substr(0, dot) + ext;
-}
-
 std::string CliSymbols::FindSymFile(const std::string& romPath)
 {
-	std::string sym = WithExtension(romPath, ".sym");
-	return FileExists(sym) ? sym : "";
+	return FolderUtilities::GetNewestFile(FolderUtilities::GetFolderName(romPath), ".sym");
 }
 
 std::string CliSymbols::FindDbgFile(const std::string& romPath)
 {
-	std::string dbg = WithExtension(romPath, ".dbg");
-	if(FileExists(dbg)) return dbg;
-	size_t slash = romPath.find_last_of("/\\");
-	std::string main = (slash == std::string::npos ? "" : romPath.substr(0, slash + 1)) + "main.dbg";
-	return FileExists(main) ? main : "";
+	return FolderUtilities::GetNewestFile(FolderUtilities::GetFolderName(romPath), ".dbg");
 }
 
 bool CliSymbols::Load(const std::string& symPath, const std::string& dbgPath)

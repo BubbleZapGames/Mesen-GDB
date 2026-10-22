@@ -1,6 +1,8 @@
 #include "test_harness.h"
 #include "cli_symbols.h"
 #include <stdexcept>
+#include <filesystem>
+#include <fstream>
 
 // The CLI's symbol table and address parsing, on a .sym in WLA-DX syntax.
 static const char* kSym =
@@ -97,4 +99,31 @@ TEST(cli_sym_dbg_then_sym)
 	s.LoadSymText("[labels]\n00:9000 wait_nmi\n");
 	ASSERT_EQ(s.Find("wait_nmi")->addr, 0x009000u);
 	ASSERT_EQ(s.Find("wait_nmi")->size, 8u);
+}
+
+// With no --sym/--dbg (and in the DAP), the newest of each in the ROM's folder
+TEST(cli_sym_finds_newest_files_beside_rom)
+{
+	namespace fs = std::filesystem;
+	fs::path dir = fs::temp_directory_path() / ("mesen-gdb-sym-" + std::to_string(rand()));
+	fs::create_directories(dir);
+	auto touch = [&](const char* name, int ageSeconds) {
+		std::ofstream(dir / name) << "x";
+		fs::last_write_time(dir / name, fs::file_time_type::clock::now() - std::chrono::seconds(ageSeconds));
+	};
+	std::string rom = (dir / "game.sfc").string();
+
+	ASSERT_EQ(CliSymbols::FindDbgFile(rom), std::string());
+	ASSERT_EQ(CliSymbols::FindSymFile(rom), std::string());
+
+	touch("game.sfc", 0);
+	touch("GAME.dbg", 100);
+	touch("main.dbg", 10);
+	touch("old.sym", 50);
+	touch("new.SYM", 5);
+	fs::create_directories(dir / "newer.dbg");
+	ASSERT_EQ(CliSymbols::FindDbgFile(rom), (dir / "main.dbg").string());
+	ASSERT_EQ(CliSymbols::FindSymFile(rom), (dir / "new.SYM").string());
+
+	fs::remove_all(dir);
 }

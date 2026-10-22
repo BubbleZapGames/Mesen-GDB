@@ -45,8 +45,9 @@ bin/linux-x64/Release/mesen-gdb --dap
 ```
 
 The DAP server maps addresses to source through a cc65-format `.dbg` (R65, cc65 C) or a WLA-DX
-`.sym` (`Core/Debugger/DAP/SourceMapper`): the launch's `dbgPath`, else the ROM's name with `.dbg`,
-then `.sym`, then `main.dbg`. In a cc65 C build a C line (`type=1`) wins over the assembly
+`.sym` (`Core/Debugger/DAP/SourceMapper`): the launch's `dbgPath`, else the newest `.dbg` in the ROM's
+folder, else the newest `.sym` there (`FolderUtilities::GetNewestFile`; an R65 build has both, and
+`wlalink -S`'s `.sym` has no source lines). In a cc65 C build a C line (`type=1`) wins over the assembly
 generated for it, and stepping from a C line stops only at C lines. `tests/roms/hello_c` is the
 C test ROM (cc65, NES), `tests/roms/hello_asm` the assembly-only one (ca65, NES).
 
@@ -99,7 +100,7 @@ itself failed through `Fail()` (or `Usage`/`ReplyError`, which do too), so any n
 it or a script will run on past the error.
 
 Addresses are hex (`$1234`, `0x1234`, `1234`, `00:8000`) or a symbol, optionally `name+off` (hex).
-`GDB/cli_symbols.*` loads them - the ROM's `.sym` and its `.dbg` (or `main.dbg`), or `--sym`/`--dbg` -
+`GDB/cli_symbols.*` loads them - the newest `.sym` and `.dbg` in the ROM's folder, or `--sym`/`--dbg` -
 with the rules of `python/mesen_gdb/rom_driver/symbols.py` (`.sym` wins an address clash); keep the two
 in step. A bare word is a symbol if one has that name, else hex. `--break` and `--check-mem*` take
 symbols too. `mem <symbol>` defaults to the symbol's size; other lengths are decimal. `#` starts a

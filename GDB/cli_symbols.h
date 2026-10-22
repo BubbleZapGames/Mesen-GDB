@@ -43,9 +43,8 @@ public:
 	// Matching - every symbol whose name contains *text*, sorted by name.
 	std::vector<const CliSymbol*> Matching(const std::string& text) const;
 
-	// The `.sym` beside *romPath* (its name with `.sym`), and the `.dbg`
-	// (its name with `.dbg`, else `main.dbg` beside it) - the DAP's rule.
-	// Empty when the file does not exist.
+	// The newest `.sym`, and the newest `.dbg`, in *romPath*'s folder - the
+	// DAP's rule. Empty when the folder has none.
 	static std::string FindSymFile(const std::string& romPath);
 	static std::string FindDbgFile(const std::string& romPath);
 };

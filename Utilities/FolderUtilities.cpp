@@ -211,6 +211,28 @@ vector<string> FolderUtilities::GetFilesInFolder(string rootFolder, std::unorder
 	return files;
 }
 
+string FolderUtilities::GetNewestFile(string folder, string extension)
+{
+	string newest;
+	fs::file_time_type newestTime;
+	std::error_code errorCode;
+	fs::directory_iterator i(fs::u8path(folder.empty() ? "." : folder), errorCode), end;
+	for(; !errorCode && i != end; i.increment(errorCode)) {
+		string fileExt = i->path().extension().u8string();
+		std::transform(fileExt.begin(), fileExt.end(), fileExt.begin(), ::tolower);
+		std::error_code fileError;
+		if(fileExt != extension || !fs::is_regular_file(i->path(), fileError)) {
+			continue;
+		}
+		fs::file_time_type time = fs::last_write_time(i->path(), fileError);
+		if(!fileError && (newest.empty() || time > newestTime)) {
+			newest = i->path().u8string();
+			newestTime = time;
+		}
+	}
+	return newest;
+}
+
 string FolderUtilities::GetFilename(string filepath, bool includeExtension)
 {
 	fs::path filename = fs::u8path(filepath).filename();

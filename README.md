@@ -66,9 +66,8 @@ be piped into stdin:
 printf 'break main\nrun\nregs\nmem heli_x_px\nquit\n' | mesen-gdb game.sfc --headless
 ```
 
-**Symbols.** If the build left a WLA-DX `.sym` file beside the ROM (its name
-with `.sym`) or a cc65-format `.dbg` (its name with `.dbg`, or `main.dbg`
-beside it), every address can be a name: `break main`, `mem heli_x_px`,
+**Symbols.** If the build left a WLA-DX `.sym` file or a cc65-format `.dbg` in
+the ROM's folder (the newest of each, by time modified), every address can be a name: `break main`, `mem heli_x_px`,
 `until snapshot_point 600`. `--sym` and `--dbg` name the files instead. When
 both files know a name, the `.sym` address wins; the `.dbg` adds sizes,
 constants and RAM the assembler never lists.
@@ -194,7 +193,7 @@ Configure your editor to launch `mesen-gdb --dap` as a debug adapter. The
 | Argument | Meaning |
 |---|---|
 | `romPath` | The ROM to run (required) |
-| `dbgPath` | A cc65-format `.dbg` or a WLA-DX `.sym` symbol file. Found automatically as the ROM's name with `.dbg`, then with `.sym`, or `main.dbg` beside it |
+| `dbgPath` | A cc65-format `.dbg` or a WLA-DX `.sym` symbol file. Found automatically as the newest `.dbg` in the ROM's folder, else the newest `.sym` there |
 | `stopOnEntry` | Pause before the first instruction (default: run) |
 | `noDebug` | Just run the game: no stop on entry, no breakpoints (VS Code's Run Without Debugging) |
 
@@ -411,8 +410,8 @@ Every call has a deadline, so a test can fail but never hang, and
 | `--movie <file.mmo>` | Play a Mesen movie from power-on |
 | `--ram-init zeros\|ones\|random` | SNES power-on RAM contents |
 | `--mesen-folder <dir>` | The folder of Mesen's `settings.json`, for a portable Mesen ([Settings](#settings)) |
-| `--sym <file>` | WLA-DX symbols (default: the ROM's name with `.sym`) |
-| `--dbg <file>` | cc65 `.dbg` symbols (default: the ROM's name with `.dbg`, or `main.dbg` beside it) |
+| `--sym <file>` | WLA-DX symbols (default: the newest `.sym` in the ROM's folder) |
+| `--dbg <file>` | cc65 `.dbg` symbols (default: the newest `.dbg` in the ROM's folder) |
 | `--json` | JSON output: batch results, or the JSON protocol at the prompt |
 | `--batch` | Batch mode (below) |
 | `--script <file>` | Run a file of debugger commands as a test ([Test scripts](#test-scripts)) |

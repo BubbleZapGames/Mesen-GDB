@@ -270,23 +270,16 @@ void DapServer::HandleLaunch(const JsonValue& request)
 		_sourceMapper.SetNesRom(inesHeader);
 	}
 
-	// Symbols: the dbgPath given (a .dbg or a WLA-DX .sym), else the ROM's
-	// name with .dbg, then with .sym, then main.dbg beside it
+	// Symbols: the dbgPath given (a .dbg or a WLA-DX .sym), else the newest
+	// .dbg in the ROM's folder, else the newest .sym there. A .dbg comes
+	// first: an R65 build has both, and the .sym wlalink -S writes holds
+	// labels but no source lines.
 	std::string dbgPath = args["dbgPath"].GetString();
 	if(dbgPath.empty()) {
-		size_t dot = romPath.find_last_of('.');
-		size_t slash = romPath.find_last_of("/\\");
-		std::vector<std::string> candidates;
-		if(dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
-			candidates.push_back(romPath.substr(0, dot) + ".dbg");
-			candidates.push_back(romPath.substr(0, dot) + ".sym");
-		}
-		candidates.push_back(romPath.substr(0, slash == std::string::npos ? 0 : slash + 1) + "main.dbg");
-		for(const std::string& candidate : candidates) {
-			if(std::ifstream(candidate).good()) {
-				dbgPath = candidate;
-				break;
-			}
+		std::string romFolder = FolderUtilities::GetFolderName(romPath);
+		dbgPath = FolderUtilities::GetNewestFile(romFolder, ".dbg");
+		if(dbgPath.empty()) {
+			dbgPath = FolderUtilities::GetNewestFile(romFolder, ".sym");
 		}
 	}
 	if(!dbgPath.empty()) {
