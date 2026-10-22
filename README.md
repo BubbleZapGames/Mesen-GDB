@@ -194,8 +194,9 @@ Configure your editor to launch `mesen-gdb --dap` as a debug adapter. The
 | Argument | Meaning |
 |---|---|
 | `romPath` | The ROM to run (required) |
-| `dbgPath` | A cc65-format `.dbg` symbol file. Found automatically as the ROM's name with `.dbg`, or `main.dbg` beside it |
-| `stopOnEntry` | Pause before the first instruction |
+| `dbgPath` | A cc65-format `.dbg` or a WLA-DX `.sym` symbol file. Found automatically as the ROM's name with `.dbg`, then with `.sym`, or `main.dbg` beside it |
+| `stopOnEntry` | Pause before the first instruction (default: run) |
+| `noDebug` | Just run the game: no stop on entry, no breakpoints (VS Code's Run Without Debugging) |
 
 With symbols loaded you can:
 - set breakpoints on source lines, conditional ones included;

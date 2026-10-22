@@ -42,6 +42,12 @@ void DapNotificationListener::ProcessNotification(ConsoleNotificationType type, 
 	}
 
 	if(type == ConsoleNotificationType::CodeBreak) {
+		if(_server->IsNoDebug()) {
+			// Run Without Debugging has no way to continue, so a break (BRK,
+			// a debugger exception) would freeze the game: carry on instead
+			_server->Resume();
+			return;
+		}
 		{
 			// Wake a step loop waiting on this break before anything else.
 			std::lock_guard<std::mutex> lock(_mutex);

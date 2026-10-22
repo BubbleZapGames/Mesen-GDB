@@ -26,7 +26,9 @@ private:
 	std::atomic<int> _seq{1};
 	bool _running = false;
 	bool _configDone = false;
-	bool _stopOnEntry = true;
+	bool _stopOnEntry = false;
+	// Run Without Debugging: the game just runs, nothing may stop it
+	bool _noDebug = false;
 	uint32_t _nextBreakpointId = 1;
 
 	// Where a breakpoint stands, as the client is told it
@@ -141,6 +143,9 @@ public:
 	void Close();
 	void SendStoppedEvent(const char* reason, CpuType cpu);
 	bool IsStepping() const { return _stepping; }
+	bool IsNoDebug() const { return _noDebug; }
+	// Let emulation continue from a break
+	void Resume();
 	void SendTerminatedEvent();
 
 	bool IsConfigDone() const { return _configDone; }

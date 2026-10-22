@@ -241,12 +241,12 @@ void DapServer::HandleLaunch(const JsonValue& request)
 	const JsonValue& args = request["arguments"];
 	std::string romPath = args["romPath"].GetString();
 
-	// stopOnEntry defaults to true if not specified
-	if(args["stopOnEntry"].GetType() != JsonValue::Type::Null) {
-		_stopOnEntry = args["stopOnEntry"].GetBool();
-	} else {
-		_stopOnEntry = true;
-	}
+	// VSCode's Run Without Debugging: no stop on entry, no breakpoints
+	_noDebug = args["noDebug"].GetType() != JsonValue::Type::Null && args["noDebug"].GetBool();
+
+	// The game runs unless the client asks to stop on entry
+	_stopOnEntry = !_noDebug && args["stopOnEntry"].GetType() != JsonValue::Type::Null
+		&& args["stopOnEntry"].GetBool();
 
 	if(romPath.empty()) {
 		auto resp = MakeResponse(request, false);
@@ -347,11 +347,15 @@ void DapServer::HandleConfigurationDone(const JsonValue& request)
 		}
 	} else {
 		// Resume execution immediately
-		DebuggerRequest req = _emu->GetDebugger(false);
-		Debugger* dbg = req.GetDebugger();
-		if(dbg) {
-			dbg->Run();
-		}
+		Resume();
+	}
+}
+
+void DapServer::Resume()
+{
+	DebuggerRequest req = _emu->GetDebugger(false);
+	if(Debugger* dbg = req.GetDebugger()) {
+		dbg->Run();
 	}
 }
 
@@ -1039,6 +1043,10 @@ void DapServer::ResolveBreakpoints()
 		if(req.status.verified) {
 			_installed.push_back(bp);
 		}
+	}
+
+	if(_noDebug) {
+		_installed.clear();
 	}
 
 	DebuggerRequest dbgReq = _emu->GetDebugger(false);
