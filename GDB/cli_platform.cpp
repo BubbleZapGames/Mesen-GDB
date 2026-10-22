@@ -74,7 +74,7 @@ std::string CliPlatform::MesenHome()
 	if(!home) home = getenv("USERPROFILE");
 #endif
 	std::string base = home ? home : std::filesystem::temp_directory_path().string();
-	return base + "/.mesen-dap";
+	return base + "/.mesen-gdb";
 }
 
 struct StdinLines::State

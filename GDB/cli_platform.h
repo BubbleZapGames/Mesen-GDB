@@ -20,7 +20,7 @@ namespace CliPlatform {
 	// framing. Nothing elsewhere.
 	void UseBinaryStdio();
 
-	// Mesen's home folder: .mesen-dap under $MESEN_HOME, else the user's home.
+	// Mesen's home folder: .mesen-gdb under $MESEN_HOME, else the user's home.
 	std::string MesenHome();
 }
 
