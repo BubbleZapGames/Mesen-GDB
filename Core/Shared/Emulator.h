@@ -113,6 +113,8 @@ private:
 	uint32_t _autoSaveStateFrameCounter = 0;
 	int32_t _stopCode = 0;
 	bool _stopRequested = false;
+	//Stops the emulator for SetStopCode (a script's emu.stop); joined by Release
+	thread _stopThread;
 
 	void WaitForLock();
 	void WaitForPauseEnd();

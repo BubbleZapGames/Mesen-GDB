@@ -13,6 +13,10 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <cctype>
 
 #include "Core/Shared/Emulator.h"
 #include "Core/Shared/EmuSettings.h"
@@ -26,6 +30,8 @@
 #include "Core/Debugger/Breakpoint.h"
 #include "Core/Debugger/DebugTypes.h"
 #include "Core/Debugger/DebugUtilities.h"
+#include "Core/Debugger/LabelManager.h"
+#include "Core/Debugger/ScriptManager.h"
 #include "Utilities/VirtualFile.h"
 #include "Core/Shared/RomInfo.h"
 #include "Utilities/FolderUtilities.h"
@@ -328,6 +334,10 @@ struct CliArgs {
 	bool turbo = false;
 	std::string ramInit;   // zeros / ones / random: power-on RAM, pinned for reproducible runs
 	std::string mesenFolder;   // --mesen-folder: where Mesen's settings.json is
+	bool testRunner = false;   // --testrunner: Mesen's Lua test runner
+	std::vector<std::string> luaScripts;   // the .lua arguments
+	int testRunnerTimeoutS = 100;   // --timeout=<seconds>, Mesen's default
+	bool enableStdout = false;   // --enableStdout: the emulator's log on stdout
 };
 
 static uint32_t ParseAddr(const std::string& s)
@@ -355,6 +365,10 @@ static void PrintUsage(const char* prog)
 		"  <rom_path> --batch      CLI batch mode\n"
 		"  <rom_path> --script <f> Run a file of debugger commands as a test: exit 0 if\n"
 		"                          every assert passed, 1 if one failed, 2 on an error\n"
+		"  --testrunner [--timeout=<s>] <rom_path> <script.lua>...\n"
+		"                          Mesen's test runner: run Lua scripts against the ROM,\n"
+		"                          headless, until one calls emu.stop(code); exit with\n"
+		"                          that code, or 255 after --timeout=<s> (default 100)\n"
 		"  --dap                   DAP mode: speak DAP JSON on stdin/stdout\n"
 		"                          (shows the game window; add --headless to suppress)\n"
 		"\n"
@@ -382,6 +396,7 @@ static void PrintUsage(const char* prog)
 		"  --mesen-folder <dir>    The folder of Mesen's settings.json, for a portable\n"
 		"                          Mesen (default: MesenCE's, then Mesen2's). Used\n"
 		"                          with a game window, not --headless\n"
+		"  --enableStdout          Test runner: the emulator's log on stdout too\n"
 		"  --log-bus               Log SNES bus writes to stdout\n"
 		"  --log-vram              Log SNES VRAM writes to stdout\n"
 		"  --log-hdma              Log SNES HDMA transfers to stdout\n"
@@ -400,6 +415,8 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 {
 	for(int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
+		std::string lower = arg;
+		std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
 
 		if(arg == "--help" || arg == "-h") {
 			PrintUsage(argv[0]);
@@ -475,10 +492,24 @@ static bool ParseArgs(int argc, char* argv[], CliArgs& args)
 			args.mesenFolder = argv[++i];
 		} else if(arg == "--turbo") {
 			args.turbo = true;
+		} else if(lower == "--testrunner") {
+			// Mesen's own switches, which it takes in any case
+			args.testRunner = true;
+		} else if(lower.rfind("--timeout=", 0) == 0) {
+			args.testRunnerTimeoutS = std::stoi(arg.substr(10));
+		} else if(lower == "--enablestdout") {
+			args.enableStdout = true;
+		} else if(lower == "--donotsavesettings" || lower == "--novideo" || lower == "--noaudio" || lower == "--noinput") {
+			// mesen-gdb never saves settings, and the test runner is headless
+		} else if(arg.rfind("--", 0) == 0 && arg.find('.') != std::string::npos && arg.find('=') != std::string::npos) {
+			fprintf(stderr, "Setting overrides (%s) are not supported\n", arg.c_str());
+			return false;
 		} else if(arg[0] == '-') {
 			fprintf(stderr, "Unknown option: %s\n", arg.c_str());
 			PrintUsage(argv[0]);
 			return false;
+		} else if(lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".lua") == 0) {
+			args.luaScripts.push_back(arg);
 		} else {
 			if(args.romPath.empty()) {
 				args.romPath = arg;
@@ -836,6 +867,181 @@ static int RunCliMode(CliArgs& args, Frontend* frontend)
 	return exitCode;
 }
 
+// --- Test runner (--testrunner) ---
+// Mesen's own (UI/Utilities/TestRunner.cs at dcf37178^): the ROM and its Lua
+// scripts, headless at maximum speed, until a script calls emu.stop(code); the
+// exit status is that code, or -1 (255) when the ROM cannot be loaded or
+// --timeout=<seconds> passes first. Lua's print writes to stdout. The symbols
+// beside the ROM (CliSymbols' rules) are the scripts' labels, for
+// emu.getLabelAddress.
+//
+// Unlike Mesen's, it runs on the built-in settings, not the installed Mesen's,
+// as every headless session does, so a test runs the same on every machine:
+// a standard controller in each SNES and NES port, and RAM zeroed unless
+// --ram-init says otherwise (as --script).
+
+// The symbols as Mesen labels: on what the CPU address maps to (work RAM,
+// ROM...), or on the CPU address itself for a register.
+static void LoadLabels(Debugger* dbg, const CliSymbols& symbols, MemoryType cpuMemType)
+{
+	LabelManager* labels = dbg->GetLabelManager();
+	for(const CliSymbol* sym : symbols.Matching("")) {
+		if(sym->isConst) continue;
+		AddressInfo rel = { (int32_t)sym->addr, cpuMemType };
+		AddressInfo abs = dbg->GetAbsoluteAddress(rel);
+		AddressInfo at = abs.Address >= 0 ? abs : rel;
+		labels->AddLabelName((uint32_t)at.Address, at.Type, sym->name);
+	}
+}
+
+// A script's log (emu.log, and its errors), less the lines that say it loaded,
+// a line repeated in a row (a callback failing every frame) given once
+static std::string ScriptLog(Debugger* dbg, int32_t scriptId)
+{
+	std::stringstream in(dbg->GetScriptManager()->GetScriptLog(scriptId));
+	std::string out, line, last;
+	int repeats = 0;
+	auto flush = [&]() {
+		if(repeats > 1) out += "(" + std::to_string(repeats) + " times)\n";
+	};
+	while(std::getline(in, line)) {
+		if(line == "Loading script..." || line == "Script loaded successfully.") continue;
+		if(line == last) {
+			repeats++;
+			continue;
+		}
+		flush();
+		out += line + "\n";
+		last = line;
+		repeats = 1;
+	}
+	flush();
+	return out;
+}
+
+static int RunTestRunner(CliArgs& args)
+{
+	FolderUtilities::SetHomeFolder(CliPlatform::MesenHome());
+
+	CliSymbols symbols;
+	std::string symPath = args.symPath.empty() ? CliSymbols::FindSymFile(args.romPath) : args.symPath;
+	std::string dbgPath = args.dbgPath.empty() ? CliSymbols::FindDbgFile(args.romPath) : args.dbgPath;
+	if(!symbols.Load(symPath, dbgPath)) {
+		fprintf(stderr, "Cannot read symbols: %s %s\n", symPath.c_str(), dbgPath.c_str());
+		return -1;
+	}
+
+	std::vector<std::pair<std::string, std::string>> scripts;   // path, text
+	for(const std::string& path : args.luaScripts) {
+		std::ifstream file(path, std::ios::binary);
+		if(!file) {
+			fprintf(stderr, "Cannot read script %s\n", path.c_str());
+			return -1;
+		}
+		std::stringstream text;
+		text << file.rdbuf();
+		scripts.emplace_back(path, text.str());
+	}
+
+	std::unique_ptr<Emulator> emu(new Emulator());
+	emu->Initialize(false);
+	KeyManager::SetSettings(emu->GetSettings());
+
+	SnesConfig& snes = emu->GetSettings()->GetSnesConfig();
+	if(snes.Port1.Type == ControllerType::None) snes.Port1.Type = ControllerType::SnesController;
+	if(snes.Port2.Type == ControllerType::None) snes.Port2.Type = ControllerType::SnesController;
+	NesConfig& nes = emu->GetSettings()->GetNesConfig();
+	if(nes.Port1.Type == ControllerType::None) nes.Port1.Type = ControllerType::NesController;
+	if(nes.Port2.Type == ControllerType::None) nes.Port2.Type = ControllerType::NesController;
+	snes.RamPowerOnState = args.ramInit == "ones" ? RamState::AllOnes :
+		args.ramInit == "random" ? RamState::Random : RamState::AllZeros;
+
+	// The emulator's log reaches stdout only when asked for, as in Mesen
+	emu->GetSettings()->SetFlag(EmulationFlags::ConsoleMode);
+	if(args.enableStdout) emu->GetSettings()->SetFlag(EmulationFlags::OutputToStdout);
+	MessageManager::SetOptions(false, args.enableStdout);
+	emu->Pause();
+
+	if(!emu->LoadRom((VirtualFile)args.romPath, VirtualFile())) {
+		fprintf(stderr, "Failed to load ROM: %s\n", args.romPath.c_str());
+		emu->Release();
+		return -1;
+	}
+
+	// The load breaks on the first instruction: wait for it before touching
+	// the debugger (see DebuggerCli::WaitUntilStopped)
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while(std::chrono::steady_clock::now() < deadline) {
+		DebuggerRequest req = emu->GetDebugger(false);
+		if(req.GetDebugger() && req.GetDebugger()->IsExecutionStopped()) break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
+	std::vector<int32_t> scriptIds;
+	std::string failure;
+	{
+		DebuggerRequest req = emu->GetDebugger(false);
+		Debugger* dbg = req.GetDebugger();
+		if(!dbg) {
+			failure = "No debugger for the scripts\n";
+		} else {
+			LoadLabels(dbg, symbols, ConsoleInfo::GetCpuMemoryType(emu->GetCpuTypes()[0]));
+			for(auto& [path, text] : scripts) {
+				std::string folder = std::filesystem::path(path).parent_path().string();
+				int32_t id = dbg->GetScriptManager()->LoadScript(path, folder, text, -1);
+				scriptIds.push_back(id);
+				// A script that fails to load (a syntax error, an error in its
+				// top level) says so in its log, where loading says it worked
+				if(dbg->GetScriptManager()->GetScriptLog(id).find("Script loaded successfully.") == std::string::npos) {
+					failure += path + ": " + ScriptLog(dbg, id);
+				}
+			}
+		}
+	}
+	if(!failure.empty()) {
+		fputs(failure.c_str(), stderr);
+		emu->Release();
+		return -1;
+	}
+
+	emu->GetSettings()->SetFlag(EmulationFlags::MaximumSpeed);
+	emu->Resume();
+
+	// The scripts' logs go with the debugger when the emulator stops: keep
+	// the latest, for a run that fails
+	std::vector<std::string> logs(scriptIds.size());
+	int result = -1;
+	bool timedOut = true;
+	auto start = std::chrono::steady_clock::now();
+	while(g_running && std::chrono::steady_clock::now() - start < std::chrono::seconds(args.testRunnerTimeoutS)) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		if(!emu->IsRunning()) {
+			result = emu->GetStopCode();
+			timedOut = false;
+			break;
+		}
+		DebuggerRequest req = emu->GetDebugger(false);
+		if(Debugger* dbg = req.GetDebugger()) {
+			for(size_t i = 0; i < scriptIds.size(); i++) {
+				logs[i] = ScriptLog(dbg, scriptIds[i]);
+			}
+		}
+	}
+
+	if(timedOut) {
+		fprintf(stderr, "Timed out after %d seconds (--timeout=<seconds>)\n", args.testRunnerTimeoutS);
+	}
+	if(result != 0) {
+		for(size_t i = 0; i < logs.size(); i++) {
+			if(!logs[i].empty()) fprintf(stderr, "%s:\n%s", scripts[i].first.c_str(), logs[i].c_str());
+		}
+	}
+	fflush(stdout);
+
+	emu->Release();
+	return result;
+}
+
 int main(int argc, char* argv[])
 {
 	CliArgs args;
@@ -852,6 +1058,14 @@ int main(int argc, char* argv[])
 	// Mode detection:
 	// 1. --dap flag → DAP mode
 	// 2. Everything else → CLI mode (default, requires ROM)
+
+	if(args.testRunner) {
+		if(args.romPath.empty()) {
+			fprintf(stderr, "Error: --testrunner needs a ROM.\n");
+			return -1;
+		}
+		return RunTestRunner(args);
+	}
 
 	FILE* dapOutput = nullptr;
 	if(args.dapMode) {

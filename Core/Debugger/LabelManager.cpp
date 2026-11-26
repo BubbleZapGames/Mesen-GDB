@@ -42,6 +42,18 @@ void LabelManager::SetLabel(uint32_t address, MemoryType memType, string label, 
 	}
 }
 
+void LabelManager::AddLabelName(uint32_t address, MemoryType memType, string label)
+{
+	uint64_t key = GetLabelKey(address, memType);
+	if(_codeLabels.find(key) == _codeLabels.end()) {
+		SetLabel(address, memType, label, "");
+		return;
+	}
+
+	DebugBreakHelper helper(_debugger);
+	_codeLabelReverseLookup.emplace(label, key);
+}
+
 int64_t LabelManager::GetLabelKey(uint32_t absoluteAddr, MemoryType memType)
 {
 	return absoluteAddr | ((uint64_t)memType << 32);

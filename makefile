@@ -155,7 +155,7 @@ endif
 ifeq ($(MESENOS),windows)
 	# One .exe, without the MinGW runtime DLLs (libwinpthread among them).
 	LINKOPTIONS += -static
-	WINLIBS := -lwinmm -lshell32
+	WINLIBS := -lwinmm -lshell32 -lws2_32
 	ifeq ($(DEBUG),0)
 		# SDL's static library carries ~10 MB of DWARF debug info.
 		LINKOPTIONS += -Wl,--strip-debug
@@ -189,6 +189,14 @@ COREOBJ := $(call objs,$(CORESRC))
 
 UTILSRC := $(shell find Utilities -name '*.cpp' -o -name '*.c')
 UTILOBJ := $(call objs,$(UTILSRC))
+
+# Lua 5.4 and LuaSocket, for --testrunner's scripts (Core/Debugger/ScriptManager)
+LUASRC := $(shell find Lua -name '*.c')
+ifeq ($(MESENOS),windows)
+	# LuaSocket's Unix-domain sockets and serial ports (as Lua.vcxproj left them out)
+	LUASRC := $(filter-out Lua/serial.c Lua/unix.c Lua/unixdgram.c Lua/unixstream.c,$(LUASRC))
+endif
+LUAOBJ := $(call objs,$(LUASRC))
 
 SDLSRC := $(shell find Sdl -name '*.cpp')
 SDLOBJ := $(call objs,$(SDLSRC))
@@ -225,9 +233,9 @@ $(OBJFOLDER)/%.o: %.mm
 
 -include $(shell find $(OBJFOLDER) -name '*.d' 2>/dev/null)
 
-$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ)
+$(OUTFOLDER)/$(GDBBIN): $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(COREOBJ) $(SDLOBJ) $(LUAOBJ)
 	mkdir -p $(OUTFOLDER)
-	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) -pthread $(FSLIB) $(SDL2LIB) $(WINLIBS)
+	$(CXX) $(CXXFLAGS) $(LINKOPTIONS) -o $@ $(GDBMAINOBJ) $(GDBOBJ) $(UTILOBJ) $(SDLOBJ) $(COREOBJ) $(LUAOBJ) -pthread $(FSLIB) $(SDL2LIB) $(WINLIBS)
 
 # Unit tests — only links DAP .cpp files (no emulator core needed)
 TESTSRC := GDB/test_main.cpp GDB/test_dap_json.cpp GDB/test_dbg_parser.cpp GDB/test_dap_protocol.cpp \
@@ -248,4 +256,4 @@ clean:
 	rm -r -f $(OBJFOLDER)
 	rm -r -f $(OUTFOLDER)/$(GDBBIN) bin/dap-test$(EXE)
 	# Objects from before obj.<platform>, built beside their sources
-	find Core Utilities Sdl GDB -name '*.o' -delete
+	find Core Utilities Sdl GDB Lua -name '*.o' -delete

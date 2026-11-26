@@ -842,6 +842,9 @@ struct DebugConfig
 	
 	bool WsBreakOnInvalidOpCode = false;
 
+	bool ScriptAllowIoOsAccess = false;
+	bool ScriptAllowNetworkAccess = false;
+	uint32_t ScriptTimeout = 1;
 };
 
 enum class HudDisplaySize

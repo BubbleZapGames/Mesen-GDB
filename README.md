@@ -316,6 +316,34 @@ With `--json`, an `assert` answers
 `{"ok":true,"pass":false,"actual":90,"expected":91,"line":11}`, plus
 `"description"` when it has one.
 
+### Lua tests (`--testrunner`)
+
+Mesen's own test runner: a ROM and a Lua script, headless at maximum speed,
+until the script calls `emu.stop(code)`. That code is the exit status. The
+arguments are the same as Mesen's, so a Makefile written for Mesen works with
+mesen-gdb:
+
+```bash
+mesen-gdb --testrunner --timeout=30 game.sfc tests/title.lua
+```
+
+- **The script** is any argument ending in `.lua`, in any order with the ROM.
+  It has Mesen's [Lua API](https://www.mesen.ca/snes/docs/apireference.html),
+  without the `io`, `os` and socket libraries.
+- **`--timeout=<seconds>`** (default 100) ends a run that never stops, with
+  status 255. Status 255 also means the ROM or the script could not be loaded.
+- **Labels** come from the symbols beside the ROM, the same files the debugger
+  reads, so `emu.getLabelAddress("frame_count")` finds a variable by name.
+- **Output:** `print` writes to stdout. When a run does not pass (a non-zero
+  code, a timeout, a script that fails to load), the script's errors and its
+  `emu.log` lines go to stderr.
+- **The same on every machine:** unlike Mesen, it ignores the installed
+  Mesen's settings, as every headless session does. Each SNES and NES port has
+  a standard controller, and power-on RAM is zeros unless `--ram-init` says
+  otherwise. Mesen's setting overrides (`--snes.region=Pal`) are refused;
+  `--doNotSaveSettings`, `--noVideo`, `--noAudio` and `--noInput` are accepted
+  and do nothing. `--enableStdout` adds the emulator's log to stdout.
+
 ### Batch mode
 
 Batch mode runs to a breakpoint, checks state, and exits with a status: 0 if
@@ -416,6 +444,8 @@ Every call has a deadline, so a test can fail but never hang, and
 | `--batch` | Batch mode (below) |
 | `--script <file>` | Run a file of debugger commands as a test ([Test scripts](#test-scripts)) |
 | `--timeout <ms>` | Batch mode: give up after this long. A script: the limit for each `run` and `rwatch`. Default 10000 |
+| `--testrunner` | Run a Lua script as a test, as Mesen's test runner does ([Lua tests](#lua-tests---testrunner)) |
+| `--timeout=<seconds>` | `--testrunner`: give up after this long. Default 100 |
 | `--dap` | DAP mode |
 | `--log-bus`, `--log-vram`, `--log-hdma` | Log SNES bus writes, VRAM writes or HDMA transfers to stdout |
 | `--help` | Show the usage |

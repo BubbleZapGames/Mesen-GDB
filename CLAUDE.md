@@ -40,6 +40,9 @@ bin/linux-x64/Release/mesen-gdb game.sfc --batch --headless \
 bin/linux-x64/Release/mesen-gdb game.sfc --headless --script tests/camera
 # Exit codes: 0 = every assert passed, 1 = one failed, 2 = a command failed (the script stops)
 
+# Lua test, as Mesen's own test runner: exit status is the script's emu.stop(code), 255 on timeout
+bin/linux-x64/Release/mesen-gdb --testrunner --timeout=30 game.sfc test.lua
+
 # DAP server (for VSCode integration)
 bin/linux-x64/Release/mesen-gdb --dap
 ```
@@ -112,6 +115,19 @@ in step. A bare word is a symbol if one has that name, else hex. `--break` and `
 symbols too. `mem <symbol>` defaults to the symbol's size; other lengths are decimal. `#` starts a
 comment. `--ram-init zeros|ones|random` pins SNES power-on RAM (otherwise random), so a session
 repeats exactly.
+
+### Lua test runner (`--testrunner`)
+
+Mesen's `--testrunner` (its UI's `TestRunner.cs` at `dcf37178^`), back after that commit removed Lua:
+`Lua/` (Lua 5.4 + LuaSocket, C), `Core/Debugger/ScriptManager`, `ScriptHost`, `ScriptingContext`,
+`LuaApi`, `LuaCallHelper`, and the `Debugger` hooks that feed scripts memory and events.
+`RunTestRunner` (`GDB/DapMain.cpp`) loads the ROM paused (`ConsoleMode`, so the debugger exists),
+turns `CliSymbols` into Mesen labels (`LabelManager::AddLabelName`: one address can carry several
+names), loads each `.lua` argument, resumes at maximum speed and waits for `emu.stop(code)`
+(`Emulator::SetStopCode`, whose stop thread `Release` joins) or `--timeout=<seconds>` (exit -1).
+Unlike Mesen it uses built-in settings, not `mesen_settings.*`, plus standard SNES/NES controllers
+and zeroed RAM (`--ram-init`). The scripts' logs die with the debugger, so the loop copies them while
+the emulator runs and prints them to stderr when the run does not pass.
 
 ### JSON protocol (`--json` without `--batch`)
 

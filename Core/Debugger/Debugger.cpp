@@ -11,6 +11,8 @@
 #include "Debugger/PpuTools.h"
 #include "Debugger/DebugBreakHelper.h"
 #include "Debugger/LabelManager.h"
+#include "Debugger/ScriptManager.h"
+#include "Debugger/ScriptHost.h"
 #include "Debugger/CallstackManager.h"
 #include "Debugger/ExpressionEvaluator.h"
 #include "Debugger/BaseEventManager.h"
@@ -77,6 +79,7 @@ Debugger::Debugger(Emulator* emu, IConsole* console)
 	_disassembler.reset(new Disassembler(console, this));
 	_disassemblySearch.reset(new DisassemblySearch(_disassembler.get(), _labelManager.get()));
 	_memoryAccessCounter.reset(new MemoryAccessCounter(this));
+	_scriptManager.reset(new ScriptManager(this));
 	_traceLogSaver.reset(new TraceLogFileSaver());
 	_cdlManager.reset(new CdlManager(this, _disassembler.get()));
 
@@ -236,6 +239,13 @@ void Debugger::ProcessInstruction()
 	}
 
 	debugger->AllowChangeProgramCounter = false;
+	
+	if(_scriptManager->HasCpuMemoryCallbacks()) {
+		MemoryOperationInfo memOp = debugger->InstructionProgress.LastMemOperation;
+		AddressInfo relAddr = { (int32_t)memOp.Address, memOp.MemType };
+		uint8_t value = (uint8_t)memOp.Value;
+		_scriptManager->ProcessMemoryOperation(relAddr, value, MemoryOperationType::ExecOpCode, type, true);
+	}
 }
 
 template<CpuType type, uint8_t accessWidth, MemoryAccessFlags flags, typename T>
@@ -266,6 +276,9 @@ void Debugger::ProcessMemoryRead(uint32_t addr, T& value, MemoryOperationType op
 			break;
 	}
 
+	if(_scriptManager->HasCpuMemoryCallbacks()) {
+		ProcessScripts<type>(addr, value, opType);
+	}
 }
 
 template<CpuType type, uint8_t accessWidth, MemoryAccessFlags flags, typename T>
@@ -296,6 +309,10 @@ bool Debugger::ProcessMemoryWrite(uint32_t addr, T& value, MemoryOperationType o
 			break;
 	}
 	
+	if(_scriptManager->HasCpuMemoryCallbacks()) {
+		ProcessScripts<type>(addr, value, opType);
+	}
+	
 	return !_debuggers[(int)type].Debugger->GetFrozenAddressManager().IsFrozenAddress(addr);
 }
 
@@ -323,6 +340,10 @@ void Debugger::ProcessMemoryAccess(uint32_t addr, T& value)
 		default: break;
 		case CpuType::Sms: GetDebugger<CpuType::Sms, SmsDebugger>()->ProcessMemoryAccess<opType>(addr, value, memType); break;
 		case CpuType::Ws: GetDebugger<CpuType::Ws, WsDebugger>()->ProcessMemoryAccess<opType, T>(addr, value, memType); break;
+	}
+
+	if(_scriptManager->HasCpuMemoryCallbacks()) {
+		ProcessScripts<cpuType>(addr, value, memType, opType);
 	}
 
 	ProcessBreakConditions<accessWidth>(cpuType, *debugger->GetStepRequest(), debugger->GetBreakpointManager(), operation, addressInfo);
@@ -397,6 +418,9 @@ void Debugger::ProcessPpuRead(uint16_t addr, T& value, MemoryType memoryType, Me
 		default: throw std::runtime_error("Invalid cpu type");
 	}
 
+	if(_scriptManager->HasPpuMemoryCallbacks()) {
+		ProcessScripts<type>(addr, value, memoryType, opType);
+	}
 }
 
 template<CpuType type, typename T>
@@ -415,6 +439,9 @@ void Debugger::ProcessPpuWrite(uint16_t addr, T& value, MemoryType memoryType)
 		default: throw std::runtime_error("Invalid cpu type");
 	}
 
+	if(_scriptManager->HasPpuMemoryCallbacks()) {
+		ProcessScripts<type>(addr, value, memoryType, MemoryOperationType::Write);
+	}
 }
 
 template<CpuType type>
@@ -557,6 +584,7 @@ void Debugger::InternalProcessInterrupt(CpuType cpuType, IDebugger& dbg, StepReq
 void Debugger::ProcessEvent(EventType type, std::optional<CpuType> cpuTypeOpt)
 {
 	CpuType evtCpuType = cpuTypeOpt.value_or(_mainCpuType);
+	_scriptManager->ProcessEvent(type, evtCpuType);
 
 	switch(type) {
 		default: break;
@@ -595,6 +623,21 @@ void Debugger::ProcessEvent(EventType type, std::optional<CpuType> cpuTypeOpt)
 			}
 			break;
 	}
+}
+
+template<CpuType type, typename T>
+void Debugger::ProcessScripts(uint32_t addr, T& value, MemoryOperationType opType)
+{
+	MemoryOperationInfo memOp = GetDebugger<type, IDebugger>()->InstructionProgress.LastMemOperation;
+	AddressInfo relAddr = { (int32_t)memOp.Address, memOp.MemType };
+	_scriptManager->ProcessMemoryOperation(relAddr, value, opType, type, false);
+}
+
+template<CpuType type, typename T>
+void Debugger::ProcessScripts(uint32_t addr, T& value, MemoryType memType, MemoryOperationType opType)
+{
+	AddressInfo relAddr = { (int32_t)addr, memType };
+	_scriptManager->ProcessMemoryOperation(relAddr, value, opType, type, false);
 }
 
 void Debugger::ProcessConfigChange()

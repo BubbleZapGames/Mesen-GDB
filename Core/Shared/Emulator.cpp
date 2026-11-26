@@ -77,6 +77,9 @@ Emulator::Emulator() :
 
 Emulator::~Emulator()
 {
+	if(_stopThread.joinable()) {
+		_stopThread.join();
+	}
 }
 
 void Emulator::Initialize(bool enableShortcuts)
@@ -93,6 +96,11 @@ void Emulator::Initialize(bool enableShortcuts)
 
 void Emulator::Release()
 {
+	//A script's emu.stop may still be stopping the emulator
+	if(_stopThread.joinable()) {
+		_stopThread.join();
+	}
+
 	Stop(true);
 
 	_videoDecoder->StopThread();
@@ -1100,10 +1108,9 @@ void Emulator::SetStopCode(int32_t stopCode)
 	_stopCode = stopCode;
 	if(!_stopFlag && !_stopRequested) {
 		_stopRequested = true;
-		thread stopEmuTask([this]() {
+		_stopThread = thread([this]() {
 			Stop(true);
 		});
-		stopEmuTask.detach();
 	}
 }
 

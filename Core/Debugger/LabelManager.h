@@ -38,6 +38,9 @@ public:
 	LabelManager(Debugger *debugger);
 
 	void SetLabel(uint32_t address, MemoryType memType, string label, string comment);
+	//Another name for an address: the first name stays the one displayed, and
+	//both find it (SetLabel keeps one name per address)
+	void AddLabelName(uint32_t address, MemoryType memType, string label);
 	void ClearLabels();
 
 	AddressInfo GetLabelAbsoluteAddress(string& label);
