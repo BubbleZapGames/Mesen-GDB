@@ -101,6 +101,7 @@ private:
 	void CmdTrace(const std::string& filename, bool withRegs = false);
 	void CmdDump(const std::string& type, const std::string& filename);
 	void CmdScreenshot(const std::string& filename);
+	void CmdRecord(const std::string& arg);
 	void CmdRunUntil(const RegCondition& cond);
 	void CmdUntil(uint32_t addr, int maxFrames);
 	void CmdJump(const std::string& target);

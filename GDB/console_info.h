@@ -96,6 +96,8 @@ inline std::vector<MemoryRegion> GetMemoryRegions(ConsoleType console)
 				{MemoryType::SnesSpriteRam, "Sprite RAM", "oam"},
 				{MemoryType::SnesPrgRom, "PRG ROM", "rom"},
 				{MemoryType::SnesSaveRam, "Save RAM", "sram"},
+				{MemoryType::SpcRam, "SPC700 RAM", "aram"},
+				{MemoryType::SpcDspRegisters, "DSP registers", "dsp"},
 			};
 
 		case ConsoleType::Gameboy:

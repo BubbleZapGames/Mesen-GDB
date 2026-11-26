@@ -19,6 +19,7 @@
 #include "Debugger/DebugUtilities.h"
 #include "Shared/MemoryType.h"
 #include "Shared/Video/VideoDecoder.h"
+#include "Shared/Audio/SoundMixer.h"
 #include "Utilities/PNGHelper.h"
 #include "Utilities/VirtualFile.h"
 #include "Shared/SaveStateManager.h"
@@ -610,6 +611,46 @@ void DebuggerCli::CmdScreenshot(const std::string& filename)
 		}
 		std::cout << "Screenshot saved to " << filename << " (" << data.size() << " bytes)\n";
 	}
+}
+
+// CmdRecord - `record <file.wav>` starts writing the console's audio, as the
+// sound chip made it, to *file*; on a SNES it also logs every DSP register
+// write to <file>.dsp, each with the WAV sample frame it lands on.
+// `record stop` closes both.
+void DebuggerCli::CmdRecord(const std::string& arg)
+{
+	AudioCapture& capture = _emu->GetSoundMixer()->GetCapture();
+	if(arg == "stop") {
+		if(!capture.IsRecording()) {
+			if(Fail("not recording")) return;
+			std::cout << "Not recording.\n";
+			return;
+		}
+		uint32_t rate = capture.GetRate();
+		uint64_t frames = capture.Stop();
+		if(_jsonOutput) {
+			ReplyOk("\"frames\":" + std::to_string(frames) + ",\"rate\":" + std::to_string(rate));
+			return;
+		}
+		printf("Recorded %llu sample frames at %u Hz\n", (unsigned long long)frames, rate);
+		return;
+	}
+
+	std::string log = _consoleType == ConsoleType::Snes ? arg + ".dsp" : "";
+	if(!capture.Start(arg, log)) {
+		if(Fail("cannot write " + arg)) return;
+		std::cout << "Failed to open " << arg << " for writing.\n";
+		return;
+	}
+	if(_jsonOutput) {
+		std::string fields = "\"path\":\"" + JsonEscape(arg) + "\"";
+		if(!log.empty()) fields += ",\"log\":\"" + JsonEscape(log) + "\"";
+		ReplyOk(fields);
+		return;
+	}
+	std::cout << "Recording audio to " << arg;
+	if(!log.empty()) std::cout << ", DSP writes to " << log;
+	std::cout << "\n";
 }
 
 void DebuggerCli::CmdSet(uint32_t addr, uint8_t val)
@@ -1331,6 +1372,7 @@ void DebuggerCli::CmdHelp()
 	std::cout << ")\n"
 		"  screenshot [file] Capture frame to PNG\n"
 		"  ss [file]         Alias for screenshot\n"
+		"  record <file.wav>|stop  Record the sound chip's output (SNES: and DSP writes to <file>.dsp)\n"
 		"  set <addr> <val>  Set CPU memory byte\n"
 		"  disasm [addr] [n] Disassemble (default: at PC, 10 lines)\n"
 		"  d [addr] [n]      Alias for disasm\n"
@@ -1487,6 +1529,9 @@ int DebuggerCli::Run()
 			} else if(cmd == "screenshot" || cmd == "ss") {
 				std::string fname = (tokens.size() > 1) ? tokens[1] : "";
 				CmdScreenshot(fname);
+			} else if(cmd == "record") {
+				if(tokens.size() < 2) { Usage("Usage: record <file.wav>|stop"); continue; }
+				CmdRecord(tokens[1]);
 			} else if(cmd == "set") {
 				if(tokens.size() < 3) { Usage("Usage: set <addr> <val>"); continue; }
 				uint32_t addr = ParseAddress(tokens[1]);

@@ -86,6 +86,12 @@ void SoundMixer::PlayAudioBuffer(int16_t* samples, uint32_t sampleCount, uint32_
 	_leftSample = samples[0];
 	_rightSample = samples[1];
 
+	// The chip's own output, before anything below changes it. A run-ahead
+	// frame is emulated again for real, so it is not recorded twice.
+	if(!_emu->IsRunAheadFrame()) {
+		_capture.AddSamples(samples, sampleCount, sourceRate);
+	}
+
 	int16_t *out = _sampleBuffer;
 	uint32_t count = _resampler->Resample(samples, sampleCount, sourceRate, cfg.SampleRate, out, 0x10000 / 2);
 

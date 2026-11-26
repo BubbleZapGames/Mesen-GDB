@@ -324,6 +324,12 @@ void Spc::Write(uint16_t addr, uint8_t value, MemoryOperationType type)
 		case 0xF2: _state.DspReg = value; break;
 		case 0xF3: 
 			if(_state.DspReg < 128) {
+#ifndef DUMMYSPC
+				AudioCapture& capture = _emu->GetSoundMixer()->GetCapture();
+				if(capture.IsLogging() && !_emu->IsRunAheadFrame()) {
+					capture.LogWrite(_dsp->GetSampleCount() / 2, _state.PC, _state.DspReg, value);
+				}
+#endif
 				_dsp->Write(_state.DspReg, value);
 			}
 			break;

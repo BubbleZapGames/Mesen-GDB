@@ -3,6 +3,7 @@
 #include "Core/Shared/Interfaces/IAudioDevice.h"
 #include "Utilities/safe_ptr.h"
 #include "Utilities/Audio/HermiteResampler.h"
+#include "Shared/Audio/AudioCapture.h"
 
 class Emulator;
 class Equalizer;
@@ -30,6 +31,8 @@ private:
 	unique_ptr<CrossFeedFilter> _crossFeedFilter;
 	unique_ptr<ReverbFilter> _reverbFilter;
 
+	AudioCapture _capture;   // the debugger's `record`
+
 	void ProcessEqualizer(int16_t *samples, uint32_t sampleCount, uint32_t targetRate);
 
 public:
@@ -48,4 +51,6 @@ public:
 	double GetRateAdjustment();
 
 	void GetLastSamples(int16_t &left, int16_t &right);
+
+	AudioCapture& GetCapture() { return _capture; }
 };

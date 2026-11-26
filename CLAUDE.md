@@ -90,6 +90,12 @@ and S A X Z (A B X Y), Q W (L R), E D (Select Start) by key position, and on the
   returns 1 if any failed, 2 if one could not be evaluated, and `main` exits with it. JSON:
   `pass`, `actual`, `expected`, `line`, and `description` if given.
 - `info symbols [text]` — symbols whose names contain *text*.
+- `record <file.wav>` / `record stop` — write the sound chip's output, as it made it (before Mesen's
+  resampler, equalizer, reverb and volume), to a 16-bit stereo WAV at its native rate (SNES 32 kHz).
+  On a SNES it also writes `<file.wav>.dsp`: one line per DSP register write, `frame reg value pc`
+  (hex but the frame), the frame being the WAV sample frame the write lands on. `SoundMixer` owns the
+  `AudioCapture`; `Spc`'s `$F3` write feeds the log. JSON: `path`, `log`; on stop `frames`, `rate`.
+- `aram` / `dsp` — SPC700 RAM and the DSP's 128 registers, as memory regions (`aram 0200 32`).
 
 `--script <file>` (any name, no extension expected) puts the file on stdin and calls
 `DebuggerCli::SetScript`: stdout carries only results (PASS/FAIL, the stopping error, the count;
